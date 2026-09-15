@@ -24,6 +24,9 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: Generate Platform Files
+        run: flutter create . --platforms=windows,android
+
       - name: Install Dependencies
         run: flutter pub get
 
