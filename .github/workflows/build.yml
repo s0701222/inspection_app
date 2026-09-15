@@ -6,7 +6,6 @@ on:
 
 jobs:
   build:
-    runs-name: windows-latest # 使用雲端 Windows 機器同時支援 Windows 與 Android 打包
     runs-on: windows-latest
 
     steps:
@@ -22,7 +21,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v4
         with:
-          flutter-version: '3.19.x' # 使用穩定的 Flutter 版本
+          flutter-version: '3.19.x'
           channel: 'stable'
           cache: true
 
