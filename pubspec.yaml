@@ -1,4 +1,12 @@
-# pubspec.yaml 的 dependencies 設定範例
+name: inspection_app
+description: A cross-platform inspection record e-form app.
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '^3.3.0'
+
 dependencies:
   flutter:
     sdk: flutter
@@ -8,3 +16,11 @@ dependencies:
   image_picker: ^1.1.2
   geolocator: ^13.0.1
   intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
