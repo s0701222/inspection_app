@@ -1,26 +1,27 @@
 name: inspection_app
-description: A cross-platform inspection record e-form app.
+description: "Inspection Record Form App with EXIF metadata parsing and PDF export."
 publish_to: 'none'
 
 version: 1.0.0+1
 
 environment:
-  sdk: '^3.3.0'
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
-  pdf: ^3.11.1
-  printing: ^5.13.1
-  path_provider: ^2.1.2
+  cupertino_icons: ^1.0.8
+  exif: ^3.3.0
+  geolocator: ^13.0.2
   image_picker: ^1.1.2
-  geolocator: ^13.0.1
   intl: ^0.19.0
+  pdf: ^3.11.1
+  printing: ^5.13.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
+  flutter_lints: ^5.0.0
 
 flutter:
   uses-material-design: true
