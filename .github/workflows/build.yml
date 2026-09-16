@@ -5,15 +5,43 @@ on:
     branches: [ main, master ]
 
 jobs:
-  build:
+  build-windows:
+    name: Build Windows (.exe)
     runs-on: windows-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java JDK (for Android)
-        uses: actions/setup-java@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Generate Windows Platform Files
+        run: flutter create . --platforms=windows
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build Windows App
+        run: flutter build windows --release
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-executable
+          path: build/windows/runner/Release/
+
+  build-android:
+    name: Build Android (.apk)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK
+        uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
           java-version: '17'
@@ -24,26 +52,17 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Generate Platform Files
-        run: flutter create . --platforms=windows,android
+      - name: Generate Android Platform Files
+        run: flutter create . --platforms=android
 
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Windows App (.exe)
-        run: flutter build windows --release
-
       - name: Build Android APK
-        run: flutter build apk --release
-
-      - name: Upload Windows Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-executable
-          path: build/windows/runner/Release/
+        run: flutter build apk --debug
 
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
