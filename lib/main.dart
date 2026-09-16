@@ -99,7 +99,7 @@ class _InspectionFormState extends State<InspectionForm> {
     _getLocation();
   }
 
-  // Get GPS Location & Format exactly like "22.325727°N, 114.204815°E"
+  // Get GPS Location & Format as "22.325727°N, 114.204815°E"
   Future<void> _getLocation() async {
     bool serviceEnabled;
     LocationPermission permission;
@@ -179,7 +179,7 @@ class _InspectionFormState extends State<InspectionForm> {
     }
   }
 
-  // Generate PDF (Updated to match Reference PDF Layout)
+  // Generate PDF
   Future<void> _generatePdf() async {
     final pdf = pw.Document();
     
@@ -292,25 +292,23 @@ class _InspectionFormState extends State<InspectionForm> {
             buildPdfTextField('Item Inspected:', _itemInspectedController.text),
             buildPdfTextField('Inspection Findings/Results:', _findingsController.text),
             buildPdfTextField('Action Taken:', _actionTakenController.text),
+            buildPdfTextField('Other Witnessing Parties (if any):', _witnessingPartiesController.text),
             
             pw.SizedBox(height: 10),
             pw.Text('Inspected by: ________________________', style: const pw.TextStyle(fontSize: 11)),
             pw.SizedBox(height: 15),
 
-            buildPdfTextField('Other Witnessing Parties (if any):', _witnessingPartiesController.text),
-            
-            pw.SizedBox(height: 10),
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
-                pw.Text('Signed by: ________________________', style: const pw.TextStyle(fontSize: 11)),
+                pw.Text('Approved by: ________________________', style: const pw.TextStyle(fontSize: 11)),
                 pw.Text('Signature Date: ________________________', style: const pw.TextStyle(fontSize: 11)),
               ]
             ),
             
             pw.SizedBox(height: 30),
 
-            // Photos Section (Table Format)
+            // Photos Section
             if (_images.isNotEmpty) ...[
               pw.Text('Photos Attached', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 10),
