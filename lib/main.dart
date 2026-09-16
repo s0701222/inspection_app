@@ -584,7 +584,7 @@ class _InspectionFormState extends State<InspectionForm> {
             ),
             const SizedBox(height: 24),
 
-            // Photos Section
+            // Photos Section (已修正邊框樣式)
             const Text('Photos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             InkWell(
@@ -595,7 +595,7 @@ class _InspectionFormState extends State<InspectionForm> {
                 padding: const EdgeInsets.symmetric(vertical: 32),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade50,
-                  border: Border.all(color: Colors.grey.shade400, style: BorderStyle.dash),
+                  border: Border.all(color: Colors.grey.shade400),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Column(
