@@ -99,7 +99,7 @@ class _InspectionFormState extends State<InspectionForm> {
     _getLocation();
   }
 
-  // Get GPS Location
+  // Get GPS Location & Format exactly like "22.325727°N, 114.204815°E"
   Future<void> _getLocation() async {
     bool serviceEnabled;
     LocationPermission permission;
@@ -126,7 +126,9 @@ class _InspectionFormState extends State<InspectionForm> {
 
     Position position = await Geolocator.getCurrentPosition();
     setState(() {
-      _locationData = 'Lat: ${position.latitude.toStringAsFixed(5)}, Lng: ${position.longitude.toStringAsFixed(5)}';
+      String latDir = position.latitude >= 0 ? 'N' : 'S';
+      String lngDir = position.longitude >= 0 ? 'E' : 'W';
+      _locationData = '${position.latitude.abs().toStringAsFixed(6)}°$latDir, ${position.longitude.abs().toStringAsFixed(6)}°$lngDir';
     });
   }
 
@@ -177,127 +179,179 @@ class _InspectionFormState extends State<InspectionForm> {
     }
   }
 
-  // Generate PDF
+  // Generate PDF (Updated to match Reference PDF Layout)
   Future<void> _generatePdf() async {
     final pdf = pw.Document();
-    final String currentTime = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
-    final String startDateStr = DateFormat('dd/MM/yyyy').format(_startDate);
-    final String endDateStr = DateFormat('dd/MM/yyyy').format(_endDate);
-    final String startTimeStr = _startTime != null ? _startTime!.format(context) : '--:--';
-    final String endTimeStr = _endTime != null ? _endTime!.format(context) : '--:--';
+    
+    // Formatting Dates and Times
+    final String dateStr = DateFormat('dd MMM yyyy').format(_startDate);
+    final String startTimeStr = _startTime != null ? '${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}' : '--:--';
+    final String endTimeStr = _endTime != null ? '${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}' : '--:--';
+    final String timeRange = '$startTimeStr-$endTimeStr';
+    final String submitTime = '${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now())} HKT';
+
+    // Reusable TextField builder for PDF
+    pw.Widget buildPdfTextField(String label, String value) {
+      return pw.Container(
+        margin: const pw.EdgeInsets.only(bottom: 12),
+        child: pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Text(label, style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
+            pw.SizedBox(height: 4),
+            pw.Text(value.isEmpty ? 'Nil' : value, style: const pw.TextStyle(fontSize: 11)),
+          ]
+        )
+      );
+    }
 
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(32),
+        margin: const pw.EdgeInsets.all(40),
+        footer: (pw.Context context) {
+          return pw.Container(
+            margin: const pw.EdgeInsets.only(top: 10),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text('Submitted: $submitTime GPS: $_locationData', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+                pw.Text('OP10-1', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+              ]
+            )
+          );
+        },
         build: (pw.Context context) {
           return [
             // Header
-            pw.Header(
-              level: 0,
-              child: pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Text('Inspection Record Form', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
-                  pw.Text(DateFormat('dd/MM/yyyy').format(DateTime.now()), style: const pw.TextStyle(fontSize: 10)),
-                ],
-              ),
+            pw.Center(
+              child: pw.Text('Inspection Record Form', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
             ),
-            pw.SizedBox(height: 10),
+            pw.SizedBox(height: 20),
 
-            // Basic Info Summary
-            pw.Row(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
+            // Basic Info Block
+            pw.Text('Project/Contract No.: ${_projectController.text}', style: const pw.TextStyle(fontSize: 11)),
+            pw.SizedBox(height: 4),
+            pw.Text('Inspection Date: $dateStr', style: const pw.TextStyle(fontSize: 11)),
+            pw.SizedBox(height: 4),
+            pw.Text('Time: $timeRange', style: const pw.TextStyle(fontSize: 11)),
+            pw.SizedBox(height: 4),
+            pw.Text('Inspection Type: $_inspectionType', style: const pw.TextStyle(fontSize: 11)),
+            pw.SizedBox(height: 20),
+
+            // General Conditions Table
+            pw.Text('General Conditions', style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+            pw.SizedBox(height: 8),
+            pw.Table(
+              border: pw.TableBorder.all(color: PdfColors.black, width: 0.5),
+              columnWidths: {
+                0: const pw.FlexColumnWidth(3.5),
+                1: const pw.FlexColumnWidth(1),
+                2: const pw.FlexColumnWidth(2),
+              },
               children: [
-                pw.Expanded(
-                  child: pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
-                    children: [
-                      pw.Text('Project/Contract No.: ${_projectController.text}'),
-                      pw.Text('Start: $startDateStr $startTimeStr'),
-                      pw.Text('End: $endDateStr $endTimeStr'),
-                      pw.Text('Type: $_inspectionType'),
-                      pw.Text('GPS: $_locationData', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
-                    ]
-                  )
-                )
+                pw.TableRow(
+                  decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                  children: [
+                    pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Item', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10))),
+                    pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Satisfactory', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10), textAlign: pw.TextAlign.center)),
+                    pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Remarks', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10))),
+                  ]
+                ),
+                ..._conditions.map((cond) => pw.TableRow(
+                  children: [
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.all(6),
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text(cond.title, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                          if (cond.subtitle.isNotEmpty) 
+                            pw.Container(
+                              margin: const pw.EdgeInsets.only(top: 2),
+                              child: pw.Text(cond.subtitle, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey800))
+                            ),
+                        ]
+                      )
+                    ),
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.all(6),
+                      child: pw.Center(child: pw.Text(cond.isYes ? 'Yes' : 'No', style: const pw.TextStyle(fontSize: 10)))
+                    ),
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.all(6),
+                      child: pw.Text(cond.remarksController.text.isEmpty ? '' : cond.remarksController.text, style: const pw.TextStyle(fontSize: 10))
+                    ),
+                  ]
+                )).toList(),
               ]
             ),
             pw.SizedBox(height: 20),
 
-            // General Conditions
-            pw.Text('General Conditions', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
-            pw.SizedBox(height: 10),
-            ..._conditions.map((cond) => pw.Container(
-              margin: const pw.EdgeInsets.only(bottom: 8),
-              child: pw.Row(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Expanded(
-                    flex: 3,
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Text(cond.title, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                        if (cond.subtitle.isNotEmpty)
-                          pw.Text(cond.subtitle, style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
-                      ]
-                    )
-                  ),
-                  pw.Expanded(
-                    flex: 1,
-                    child: pw.Text(cond.isYes ? '[ Yes ]' : '[ No ]', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10, color: cond.isYes ? PdfColors.blue800 : PdfColors.red800))
-                  ),
-                  pw.Expanded(
-                    flex: 2,
-                    child: pw.Text('Remarks: ${cond.remarksController.text.isEmpty ? "None" : cond.remarksController.text}', style: const pw.TextStyle(fontSize: 10))
-                  ),
-                ]
-              )
-            )),
-
-            pw.SizedBox(height: 10),
-            pw.Divider(),
-            pw.SizedBox(height: 10),
-
             // Text Fields
-            pw.Text('Item Inspected:', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-            pw.Text(_itemInspectedController.text.isEmpty ? 'Nil' : _itemInspectedController.text, style: const pw.TextStyle(fontSize: 10)),
-            pw.SizedBox(height: 8),
+            buildPdfTextField('Item Inspected:', _itemInspectedController.text),
+            buildPdfTextField('Inspection Findings/Results:', _findingsController.text),
+            buildPdfTextField('Action Taken:', _actionTakenController.text),
+            
+            pw.SizedBox(height: 10),
+            pw.Text('Inspected by: ________________________', style: const pw.TextStyle(fontSize: 11)),
+            pw.SizedBox(height: 15),
 
-            pw.Text('Inspection Findings/Results:', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-            pw.Text(_findingsController.text, style: const pw.TextStyle(fontSize: 10)),
-            pw.SizedBox(height: 8),
+            buildPdfTextField('Other Witnessing Parties (if any):', _witnessingPartiesController.text),
+            
+            pw.SizedBox(height: 10),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text('Signed by: ________________________', style: const pw.TextStyle(fontSize: 11)),
+                pw.Text('Signature Date: ________________________', style: const pw.TextStyle(fontSize: 11)),
+              ]
+            ),
+            
+            pw.SizedBox(height: 30),
 
-            pw.Text('Action Taken:', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-            pw.Text(_actionTakenController.text, style: const pw.TextStyle(fontSize: 10)),
-            pw.SizedBox(height: 8),
-
-            pw.Text('Other Witnessing Parties (if any):', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-            pw.Text(_witnessingPartiesController.text, style: const pw.TextStyle(fontSize: 10)),
-            pw.SizedBox(height: 20),
-
-            // Photos
+            // Photos Section (Table Format)
             if (_images.isNotEmpty) ...[
-              pw.Text('Photos', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+              pw.Text('Photos Attached', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 10),
-              pw.Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: _images.map((image) {
+              pw.Table(
+                border: pw.TableBorder.all(color: PdfColors.black, width: 0.5),
+                columnWidths: {
+                  0: const pw.FlexColumnWidth(1),
+                  1: const pw.FlexColumnWidth(1),
+                },
+                children: _images.asMap().entries.map((entry) {
+                  int idx = entry.key;
+                  XFile image = entry.value;
                   final imageBytes = File(image.path).readAsBytesSync();
                   final pdfImage = pw.MemoryImage(imageBytes);
-                  return pw.Container(
-                    width: 150,
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Image(pdfImage, fit: pw.BoxFit.contain),
-                        pw.SizedBox(height: 4),
-                        pw.Text('Time: $currentTime', style: const pw.TextStyle(fontSize: 7)),
-                        pw.Text('GPS: $_locationData', style: const pw.TextStyle(fontSize: 7)),
-                      ],
-                    ),
+
+                  return pw.TableRow(
+                    children: [
+                      // Image Cell
+                      pw.Container(
+                        padding: const pw.EdgeInsets.all(10),
+                        height: 200,
+                        alignment: pw.Alignment.center,
+                        child: pw.Image(pdfImage, fit: pw.BoxFit.contain),
+                      ),
+                      // Text Metadata Cell
+                      pw.Container(
+                        padding: const pw.EdgeInsets.all(12),
+                        alignment: pw.Alignment.topLeft,
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          mainAxisAlignment: pw.MainAxisAlignment.start,
+                          children: [
+                            pw.Text('Photo ${idx + 1}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 12)),
+                            pw.SizedBox(height: 8),
+                            pw.Text('Time: $submitTime', style: const pw.TextStyle(fontSize: 10)),
+                            pw.SizedBox(height: 4),
+                            pw.Text('GPS: $_locationData', style: const pw.TextStyle(fontSize: 10)),
+                          ]
+                        )
+                      ),
+                    ]
                   );
                 }).toList(),
               ),
@@ -584,7 +638,7 @@ class _InspectionFormState extends State<InspectionForm> {
             ),
             const SizedBox(height: 24),
 
-            // Photos Section (已修正邊框樣式)
+            // Photos Section 
             const Text('Photos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             InkWell(
