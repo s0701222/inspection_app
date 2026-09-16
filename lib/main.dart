@@ -70,23 +70,23 @@ class _InspectionFormState extends State<InspectionForm> {
   final List<ConditionItemModel> _conditions = [
     ConditionItemModel(
       title: 'A. Site Safety',
-      subtitle: '(including accident/fire prevention, environment/hygiene/first-aid at workplace, manual handling and F&IU regulations if applicable)',
+      subtitle: '(Including Accident/Fire Prevention, Environment/Hygiene/First-Aid At Workplace, Manual Handling And F&IU Regulations If Applicable)',
     ),
     ConditionItemModel(
       title: 'B. Site Security/Cleanliness',
       subtitle: '',
     ),
     ConditionItemModel(
-      title: 'C. Progress against the agreed programme',
+      title: 'C. Progress Against The Agreed Programme',
       subtitle: '',
     ),
     ConditionItemModel(
-      title: 'D. Environmental issue/Waste Management',
+      title: 'D. Environmental Issue/Waste Management',
       subtitle: '',
     ),
     ConditionItemModel(
-      title: 'E. Appropriate workers with adequate protection',
-      subtitle: '(including Personal Protective Equipment)',
+      title: 'E. Appropriate Workers With Adequate Protection',
+      subtitle: '(Including Personal Protective Equipment)',
     ),
   ];
 
@@ -183,11 +183,16 @@ class _InspectionFormState extends State<InspectionForm> {
   Future<void> _generatePdf() async {
     final pdf = pw.Document();
     
-    // Formatting Dates and Times
-    final String dateStr = DateFormat('dd MMM yyyy').format(_startDate);
-    final String startTimeStr = _startTime != null ? '${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}' : '--:--';
-    final String endTimeStr = _endTime != null ? '${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}' : '--:--';
-    final String timeRange = '$startTimeStr-$endTimeStr';
+    // Formatting Dates and Times separately
+    final String startDateStr = DateFormat('dd/MM/yyyy').format(_startDate);
+    final String endDateStr = DateFormat('dd/MM/yyyy').format(_endDate);
+    final String startTimeStr = _startTime != null 
+        ? '${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}' 
+        : '--:--';
+    final String endTimeStr = _endTime != null 
+        ? '${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}' 
+        : '--:--';
+    
     final String submitTime = '${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now())} HKT';
 
     // Reusable TextField builder for PDF
@@ -229,12 +234,22 @@ class _InspectionFormState extends State<InspectionForm> {
             ),
             pw.SizedBox(height: 20),
 
-            // Basic Info Block
+            // Basic Info Block with broken down Dates and Times
             pw.Text('Project/Contract No.: ${_projectController.text}', style: const pw.TextStyle(fontSize: 11)),
             pw.SizedBox(height: 4),
-            pw.Text('Inspection Date: $dateStr', style: const pw.TextStyle(fontSize: 11)),
+            pw.Row(
+              children: [
+                pw.Expanded(child: pw.Text('Start Date: $startDateStr', style: const pw.TextStyle(fontSize: 11))),
+                pw.Expanded(child: pw.Text('End Date: $endDateStr', style: const pw.TextStyle(fontSize: 11))),
+              ],
+            ),
             pw.SizedBox(height: 4),
-            pw.Text('Time: $timeRange', style: const pw.TextStyle(fontSize: 11)),
+            pw.Row(
+              children: [
+                pw.Expanded(child: pw.Text('Start Time: $startTimeStr', style: const pw.TextStyle(fontSize: 11))),
+                pw.Expanded(child: pw.Text('End Time: $endTimeStr', style: const pw.TextStyle(fontSize: 11))),
+              ],
+            ),
             pw.SizedBox(height: 4),
             pw.Text('Inspection Type: $_inspectionType', style: const pw.TextStyle(fontSize: 11)),
             pw.SizedBox(height: 20),
@@ -306,10 +321,9 @@ class _InspectionFormState extends State<InspectionForm> {
               ]
             ),
             
-            pw.SizedBox(height: 30),
-
-            // Photos Section
+            // Move Photos Attached to the next page
             if (_images.isNotEmpty) ...[
+              pw.NewPage(),
               pw.Text('Photos Attached', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 10),
               pw.Table(
@@ -535,13 +549,11 @@ class _InspectionFormState extends State<InspectionForm> {
                   const Text('General Conditions', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 16),
                   
-                  // Map through conditions for aligned layout
                   ..._conditions.map((cond) => Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8.0),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Left side: Title and Subtitle
                         Expanded(
                           flex: 3,
                           child: Column(
@@ -553,7 +565,6 @@ class _InspectionFormState extends State<InspectionForm> {
                             ],
                           ),
                         ),
-                        // Right side: Radio buttons and Remarks
                         Expanded(
                           flex: 2,
                           child: Row(
