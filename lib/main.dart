@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:exif/exif.dart';
 
 void main() {
   runApp(const InspectionApp());
@@ -39,6 +40,18 @@ class ConditionItemModel {
     this.isYes = true,
     TextEditingController? remarksController,
   }) : remarksController = remarksController ?? TextEditingController();
+}
+
+class PhotoData {
+  final XFile file;
+  final String photoGps;
+  final String photoTime;
+
+  PhotoData({
+    required this.file,
+    required this.photoGps,
+    required this.photoTime,
+  });
 }
 
 class InspectionForm extends StatefulWidget {
@@ -91,7 +104,7 @@ class _InspectionFormState extends State<InspectionForm> {
   ];
 
   String _locationData = 'Fetching location...';
-  List<XFile> _images = [];
+  List<PhotoData> _photos = [];
 
   @override
   void initState() {
@@ -99,7 +112,7 @@ class _InspectionFormState extends State<InspectionForm> {
     _getLocation();
   }
 
-  // Get GPS Location & Format as "22.325727°N, 114.204815°E"
+  // Live GPS Location for Device / Submission (Page 1 Footer)
   Future<void> _getLocation() async {
     bool serviceEnabled;
     LocationPermission permission;
@@ -132,18 +145,73 @@ class _InspectionFormState extends State<InspectionForm> {
     });
   }
 
-  // Pick Images
+  // Extract EXIF GPS and Capture Time (Falls back to 'N/A' if missing)
+  Future<Map<String, String>> _extractPhotoExif(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final data = await readExifFromBytes(bytes);
+
+      String? photoGps;
+      String? photoTime;
+
+      if (data.containsKey('GPS GPSLatitude') && data.containsKey('GPS GPSLongitude')) {
+        final latValues = data['GPS GPSLatitude']?.values.toList();
+        final latRef = data['GPS GPSLatitudeRef']?.printable ?? 'N';
+        final lngValues = data['GPS GPSLongitude']?.values.toList();
+        final lngRef = data['GPS GPSLongitudeRef']?.printable ?? 'E';
+
+        if (latValues != null && lngValues != null && latValues.length >= 3 && lngValues.length >= 3) {
+          double latDeg = _ratioToDouble(latValues[0]) + (_ratioToDouble(latValues[1]) / 60) + (_ratioToDouble(latValues[2]) / 3600);
+          double lngDeg = _ratioToDouble(lngValues[0]) + (_ratioToDouble(lngValues[1]) / 60) + (_ratioToDouble(lngValues[2]) / 3600);
+
+          photoGps = '${latDeg.toStringAsFixed(6)}°$latRef, ${lngDeg.toStringAsFixed(6)}°$lngRef';
+        }
+      }
+
+      if (data.containsKey('EXIF DateTimeOriginal')) {
+        photoTime = data['EXIF DateTimeOriginal']?.printable;
+      } else if (data.containsKey('Image DateTime')) {
+        photoTime = data['Image DateTime']?.printable;
+      }
+
+      return {
+        'gps': photoGps ?? 'N/A',
+        'time': photoTime ?? 'N/A',
+      };
+    } catch (_) {
+      return {
+        'gps': 'N/A',
+        'time': 'N/A',
+      };
+    }
+  }
+
+  double _ratioToDouble(dynamic value) {
+    if (value is Ratio) {
+      return value.toDouble();
+    }
+    return 0.0;
+  }
+
+  // Pick Images & Process Metadata
   Future<void> _pickImages() async {
     final ImagePicker picker = ImagePicker();
     final List<XFile>? selectedImages = await picker.pickMultiImage();
     if (selectedImages != null && selectedImages.isNotEmpty) {
-      setState(() {
-        _images.addAll(selectedImages);
-      });
+      for (var xFile in selectedImages) {
+        final exif = await _extractPhotoExif(File(xFile.path));
+        setState(() {
+          _photos.add(PhotoData(
+            file: xFile,
+            photoGps: exif['gps']!,
+            photoTime: exif['time']!,
+          ));
+        });
+      }
     }
   }
 
-  // Date Picker
+  // Date Pickers
   Future<void> _selectDate(BuildContext context, bool isStart) async {
     final DateTime? picked = await showDatePicker(
       context: context,
@@ -162,7 +230,7 @@ class _InspectionFormState extends State<InspectionForm> {
     }
   }
 
-  // Time Picker
+  // Time Pickers
   Future<void> _selectTime(BuildContext context, bool isStart) async {
     final TimeOfDay? picked = await showTimePicker(
       context: context,
@@ -183,7 +251,6 @@ class _InspectionFormState extends State<InspectionForm> {
   Future<void> _generatePdf() async {
     final pdf = pw.Document();
     
-    // Formatting Dates and Times separately
     final String startDateStr = DateFormat('dd/MM/yyyy').format(_startDate);
     final String endDateStr = DateFormat('dd/MM/yyyy').format(_endDate);
     final String startTimeStr = _startTime != null 
@@ -195,7 +262,6 @@ class _InspectionFormState extends State<InspectionForm> {
     
     final String submitTime = '${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now())} HKT';
 
-    // Reusable TextField builder for PDF
     pw.Widget buildPdfTextField(String label, String value) {
       return pw.Container(
         margin: const pw.EdgeInsets.only(bottom: 12),
@@ -220,6 +286,7 @@ class _InspectionFormState extends State<InspectionForm> {
             child: pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
+                // Retains live device location for Page 1 footer
                 pw.Text('Submitted: $submitTime GPS: $_locationData', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
                 pw.Text('OP10-1', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
               ]
@@ -234,7 +301,7 @@ class _InspectionFormState extends State<InspectionForm> {
             ),
             pw.SizedBox(height: 20),
 
-            // Basic Info Block with broken down Dates and Times
+            // Basic Info Block
             pw.Text('Project/Contract No.: ${_projectController.text}', style: const pw.TextStyle(fontSize: 11)),
             pw.SizedBox(height: 4),
             pw.Row(
@@ -321,8 +388,8 @@ class _InspectionFormState extends State<InspectionForm> {
               ]
             ),
             
-            // Move Photos Attached to the next page
-            if (_images.isNotEmpty) ...[
+            // Photos Attached Section (EXIF metadata parsed with 'N/A' fallbacks)
+            if (_photos.isNotEmpty) ...[
               pw.NewPage(),
               pw.Text('Photos Attached', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 10),
@@ -332,10 +399,10 @@ class _InspectionFormState extends State<InspectionForm> {
                   0: const pw.FlexColumnWidth(1),
                   1: const pw.FlexColumnWidth(1),
                 },
-                children: _images.asMap().entries.map((entry) {
+                children: _photos.asMap().entries.map((entry) {
                   int idx = entry.key;
-                  XFile image = entry.value;
-                  final imageBytes = File(image.path).readAsBytesSync();
+                  PhotoData item = entry.value;
+                  final imageBytes = File(item.file.path).readAsBytesSync();
                   final pdfImage = pw.MemoryImage(imageBytes);
 
                   return pw.TableRow(
@@ -347,7 +414,7 @@ class _InspectionFormState extends State<InspectionForm> {
                         alignment: pw.Alignment.center,
                         child: pw.Image(pdfImage, fit: pw.BoxFit.contain),
                       ),
-                      // Text Metadata Cell
+                      // Metadata Cell
                       pw.Container(
                         padding: const pw.EdgeInsets.all(12),
                         alignment: pw.Alignment.topLeft,
@@ -357,9 +424,9 @@ class _InspectionFormState extends State<InspectionForm> {
                           children: [
                             pw.Text('Photo ${idx + 1}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 12)),
                             pw.SizedBox(height: 8),
-                            pw.Text('Time: $submitTime', style: const pw.TextStyle(fontSize: 10)),
+                            pw.Text('Time: ${item.photoTime}', style: const pw.TextStyle(fontSize: 10)),
                             pw.SizedBox(height: 4),
-                            pw.Text('GPS: $_locationData', style: const pw.TextStyle(fontSize: 10)),
+                            pw.Text('GPS: ${item.photoGps}', style: const pw.TextStyle(fontSize: 10)),
                           ]
                         )
                       ),
@@ -412,7 +479,6 @@ class _InspectionFormState extends State<InspectionForm> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Project No
             const Text('Project/Contract No. *', style: TextStyle(fontWeight: FontWeight.w500)),
             const SizedBox(height: 8),
             TextField(
@@ -612,7 +678,7 @@ class _InspectionFormState extends State<InspectionForm> {
             ),
             const SizedBox(height: 24),
 
-            // Multiline Text Fields
+            // Text Inputs
             const Text('Item Inspected', style: TextStyle(fontWeight: FontWeight.w500)),
             const SizedBox(height: 8),
             TextField(
@@ -667,7 +733,7 @@ class _InspectionFormState extends State<InspectionForm> {
                     SizedBox(height: 12),
                     Text('Tap to take or upload photos', style: TextStyle(color: Colors.blueGrey, fontSize: 16)),
                     SizedBox(height: 4),
-                    Text('GPS and time captured — photos stay on your device until the PDF is made', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                    Text('EXIF GPS and timestamp captured from photo file (shows N/A if missing)', style: TextStyle(color: Colors.grey, fontSize: 12)),
                   ],
                 ),
               ),
@@ -675,16 +741,16 @@ class _InspectionFormState extends State<InspectionForm> {
             const SizedBox(height: 16),
 
             // Image Preview Block
-            if (_images.isNotEmpty)
+            if (_photos.isNotEmpty)
               Wrap(
                 spacing: 12,
                 runSpacing: 12,
-                children: _images.map((img) => Stack(
+                children: _photos.map((item) => Stack(
                   alignment: Alignment.topRight,
                   children: [
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      child: Image.file(File(img.path), width: 120, height: 120, fit: BoxFit.cover),
+                      child: Image.file(File(item.file.path), width: 120, height: 120, fit: BoxFit.cover),
                     ),
                     Padding(
                       padding: const EdgeInsets.all(4.0),
@@ -694,7 +760,7 @@ class _InspectionFormState extends State<InspectionForm> {
                         child: IconButton(
                           padding: EdgeInsets.zero,
                           icon: const Icon(Icons.close, color: Colors.red, size: 18),
-                          onPressed: () => setState(() => _images.remove(img)),
+                          onPressed: () => setState(() => _photos.remove(item)),
                         ),
                       ),
                     )
