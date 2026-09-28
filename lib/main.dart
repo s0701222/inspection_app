@@ -106,6 +106,9 @@ class _InspectionFormState extends State<InspectionForm> {
 
   String _locationData = 'Fetching location...';
   List<PhotoData> _photos = [];
+  
+  // Track generation state to show loading UI
+  bool _isGenerating = false;
 
   @override
   void initState() {
@@ -213,7 +216,6 @@ class _InspectionFormState extends State<InspectionForm> {
   // Pick Images (Uncompressed to preserve EXIF metadata)
   Future<void> _pickImages() async {
     final ImagePicker picker = ImagePicker();
-    // Do NOT pass imageQuality here, as compressing re-encodes and strips EXIF tags!
     final List<XFile>? selectedImages = await picker.pickMultiImage();
     if (selectedImages != null && selectedImages.isNotEmpty) {
       for (var xFile in selectedImages) {
@@ -229,7 +231,6 @@ class _InspectionFormState extends State<InspectionForm> {
     }
   }
 
-  // Date Pickers
   Future<void> _selectDate(BuildContext context, bool isStart) async {
     final DateTime? picked = await showDatePicker(
       context: context,
@@ -248,7 +249,6 @@ class _InspectionFormState extends State<InspectionForm> {
     }
   }
 
-  // Time Pickers
   Future<void> _selectTime(BuildContext context, bool isStart) async {
     final TimeOfDay? picked = await showTimePicker(
       context: context,
@@ -267,16 +267,31 @@ class _InspectionFormState extends State<InspectionForm> {
 
   // Generate PDF
   Future<void> _generatePdf() async {
+    if (_isGenerating) return;
+    
+    setState(() {
+      _isGenerating = true;
+    });
+
     try {
       pw.Font regularFont;
       pw.Font boldFont;
 
       try {
-        regularFont = await PdfGoogleFonts.robotoRegular();
-        boldFont = await PdfGoogleFonts.robotoBold();
+        // Added a 5 second timeout so a bad network connection doesn't freeze the app forever
+        regularFont = await PdfGoogleFonts.robotoRegular().timeout(const Duration(seconds: 5));
+        boldFont = await PdfGoogleFonts.robotoBold().timeout(const Duration(seconds: 5));
       } catch (_) {
         regularFont = pw.Font.helvetica();
         boldFont = pw.Font.helveticaBold();
+      }
+
+      // PRELOAD IMAGES ASYNCHRONOUSLY
+      // We process the heavy uncompressed images here in the background to prevent main thread freezing
+      List<pw.MemoryImage> preloadedPdfImages = [];
+      for (var item in _photos) {
+        final bytes = await File(item.file.path).readAsBytes(); // async reading
+        preloadedPdfImages.add(pw.MemoryImage(bytes));
       }
 
       final pdf = pw.Document(
@@ -329,13 +344,11 @@ class _InspectionFormState extends State<InspectionForm> {
           },
           build: (pw.Context context) {
             return [
-              // Header
               pw.Center(
                 child: pw.Text('Inspection Record Form', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
               ),
               pw.SizedBox(height: 20),
 
-              // Basic Info Block
               pw.Text('Project/Contract No.: ${_projectController.text}', style: const pw.TextStyle(fontSize: 11)),
               pw.SizedBox(height: 4),
               pw.Row(
@@ -355,7 +368,6 @@ class _InspectionFormState extends State<InspectionForm> {
               pw.Text('Inspection Type: $_inspectionType', style: const pw.TextStyle(fontSize: 11)),
               pw.SizedBox(height: 20),
 
-              // General Conditions Table
               pw.Text('General Conditions', style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 8),
               pw.Table(
@@ -404,7 +416,6 @@ class _InspectionFormState extends State<InspectionForm> {
               ),
               pw.SizedBox(height: 20),
 
-              // Text Fields
               buildPdfTextField('Item Inspected:', _itemInspectedController.text),
               buildPdfTextField('Inspection Findings/Results:', _findingsController.text),
               buildPdfTextField('Action Taken:', _actionTakenController.text),
@@ -422,7 +433,6 @@ class _InspectionFormState extends State<InspectionForm> {
                 ]
               ),
               
-              // Photos Attached Section
               if (_photos.isNotEmpty) ...[
                 pw.NewPage(),
                 pw.Text('Photos Attached', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
@@ -436,19 +446,18 @@ class _InspectionFormState extends State<InspectionForm> {
                   children: _photos.asMap().entries.map((entry) {
                     int idx = entry.key;
                     PhotoData item = entry.value;
-                    final imageBytes = File(item.file.path).readAsBytesSync();
-                    final pdfImage = pw.MemoryImage(imageBytes);
+                    
+                    // We pull from the pre-loaded image list to avoid synchronously loading bytes here
+                    final pdfImage = preloadedPdfImages[idx];
 
                     return pw.TableRow(
                       children: [
-                        // Image Cell
                         pw.Container(
                           padding: const pw.EdgeInsets.all(10),
                           height: 200,
                           alignment: pw.Alignment.center,
                           child: pw.Image(pdfImage, fit: pw.BoxFit.contain),
                         ),
-                        // Metadata Cell
                         pw.Container(
                           padding: const pw.EdgeInsets.all(12),
                           alignment: pw.Alignment.topLeft,
@@ -488,6 +497,12 @@ class _InspectionFormState extends State<InspectionForm> {
           ),
         );
       }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isGenerating = false;
+        });
+      }
     }
   }
 
@@ -516,13 +531,15 @@ class _InspectionFormState extends State<InspectionForm> {
             padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
             child: ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.indigo,
+                backgroundColor: _isGenerating ? Colors.grey : Colors.indigo,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
               ),
-              onPressed: _generatePdf,
-              icon: const Icon(Icons.download, color: Colors.white, size: 16),
-              label: const Text('Generate PDF', style: TextStyle(color: Colors.white, fontSize: 12)),
+              onPressed: _isGenerating ? null : _generatePdf,
+              icon: _isGenerating 
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Icon(Icons.download, color: Colors.white, size: 16),
+              label: Text(_isGenerating ? 'Processing...' : 'Generate PDF', style: const TextStyle(color: Colors.white, fontSize: 12)),
             ),
           )
         ],
