@@ -31,7 +31,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-executable
-          # 這裡修正了路徑，加入了 x64
           path: build/windows/x64/runner/Release/
 
   build-android:
@@ -55,6 +54,15 @@ jobs:
 
       - name: Generate Android Platform Files
         run: flutter create . --platforms=android
+
+      - name: Patch AndroidManifest & build.gradle (Fix APK Permissions & SDK)
+        run: |
+          # Inject required GPS permissions for geolocator to prevent runtime crashes
+          sed -i '/<application/i \    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />' android/app/src/main/AndroidManifest.xml
+          
+          # Force SDK versions required by geolocator (34) and printing (21)
+          sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle || true
+          sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle || true
 
       - name: Install Dependencies
         run: flutter pub get
