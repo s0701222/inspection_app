@@ -114,35 +114,42 @@ class _InspectionFormState extends State<InspectionForm> {
 
   // Live GPS Location for Device / Submission (Page 1 Footer)
   Future<void> _getLocation() async {
-    bool serviceEnabled;
-    LocationPermission permission;
+    try {
+      bool serviceEnabled;
+      LocationPermission permission;
 
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      setState(() => _locationData = 'Location services disabled.');
-      return;
-    }
-
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        setState(() => _locationData = 'Location permissions denied');
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (mounted) setState(() => _locationData = 'Location services disabled.');
         return;
       }
-    }
-    
-    if (permission == LocationPermission.deniedForever) {
-      setState(() => _locationData = 'Location permissions permanently denied.');
-      return;
-    } 
 
-    Position position = await Geolocator.getCurrentPosition();
-    setState(() {
-      String latDir = position.latitude >= 0 ? 'N' : 'S';
-      String lngDir = position.longitude >= 0 ? 'E' : 'W';
-      _locationData = '${position.latitude.abs().toStringAsFixed(6)}°$latDir, ${position.longitude.abs().toStringAsFixed(6)}°$lngDir';
-    });
+      permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          if (mounted) setState(() => _locationData = 'Location permissions denied');
+          return;
+        }
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        if (mounted) setState(() => _locationData = 'Location permissions permanently denied.');
+        return;
+      } 
+
+      Position position = await Geolocator.getCurrentPosition();
+      if (mounted) {
+        setState(() {
+          String latDir = position.latitude >= 0 ? 'N' : 'S';
+          String lngDir = position.longitude >= 0 ? 'E' : 'W';
+          _locationData = '${position.latitude.abs().toStringAsFixed(6)}°$latDir, ${position.longitude.abs().toStringAsFixed(6)}°$lngDir';
+        });
+      }
+    } catch (e) {
+      // Prevents crash if AndroidManifest is missing permissions
+      if (mounted) setState(() => _locationData = 'Location error (Check permissions)');
+    }
   }
 
   // Extract EXIF GPS and Capture Time (Falls back to 'N/A' if missing)
@@ -196,7 +203,9 @@ class _InspectionFormState extends State<InspectionForm> {
   // Pick Images & Process Metadata
   Future<void> _pickImages() async {
     final ImagePicker picker = ImagePicker();
-    final List<XFile>? selectedImages = await picker.pickMultiImage();
+    // imageQuality prevents Out-Of-Memory (OOM) crashes on Android when building PDFs
+    final List<XFile>? selectedImages = await picker.pickMultiImage(imageQuality: 70); 
+    
     if (selectedImages != null && selectedImages.isNotEmpty) {
       for (var xFile in selectedImages) {
         final exif = await _extractPhotoExif(File(xFile.path));
@@ -286,7 +295,6 @@ class _InspectionFormState extends State<InspectionForm> {
             child: pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
-                // Retains live device location for Page 1 footer
                 pw.Text('Submitted: $submitTime GPS: $_locationData', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
                 pw.Text('OP10-1', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
               ]
