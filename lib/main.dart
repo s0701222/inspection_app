@@ -19,6 +19,7 @@ class InspectionApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Inspection Record Form',
+      debugShowCheckedModeBanner: false, // Removes the red "DEBUG" banner
       theme: ThemeData(
         primarySwatch: Colors.indigo,
         scaffoldBackgroundColor: Colors.white,
@@ -147,7 +148,6 @@ class _InspectionFormState extends State<InspectionForm> {
         });
       }
     } catch (e) {
-      // Prevents crash if AndroidManifest is missing permissions
       if (mounted) setState(() => _locationData = 'Location error (Check permissions)');
     }
   }
@@ -203,9 +203,7 @@ class _InspectionFormState extends State<InspectionForm> {
   // Pick Images & Process Metadata
   Future<void> _pickImages() async {
     final ImagePicker picker = ImagePicker();
-    // imageQuality prevents Out-Of-Memory (OOM) crashes on Android when building PDFs
-    final List<XFile>? selectedImages = await picker.pickMultiImage(imageQuality: 70); 
-    
+    final List<XFile>? selectedImages = await picker.pickMultiImage(imageQuality: 70);
     if (selectedImages != null && selectedImages.isNotEmpty) {
       for (var xFile in selectedImages) {
         final exif = await _extractPhotoExif(File(xFile.path));
@@ -396,7 +394,7 @@ class _InspectionFormState extends State<InspectionForm> {
               ]
             ),
             
-            // Photos Attached Section (EXIF metadata parsed with 'N/A' fallbacks)
+            // Photos Attached Section
             if (_photos.isNotEmpty) ...[
               pw.NewPage(),
               pw.Text('Photos Attached', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
@@ -458,32 +456,40 @@ class _InspectionFormState extends State<InspectionForm> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        titleSpacing: 12,
         title: Row(
           children: const [
             Icon(Icons.description, color: Colors.blueAccent),
             SizedBox(width: 8),
-            Text('Inspection Record Form', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+            Expanded(
+              child: Text(
+                'Inspection Record Form',
+                style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
         backgroundColor: Colors.white,
         elevation: 1,
         actions: [
           Padding(
-            padding: const EdgeInsets.all(8.0),
+            padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
             child: ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.indigo,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
               ),
               onPressed: _generatePdf,
-              icon: const Icon(Icons.download, color: Colors.white, size: 18),
-              label: const Text('Generate PDF', style: TextStyle(color: Colors.white)),
+              icon: const Icon(Icons.download, color: Colors.white, size: 16),
+              label: const Text('Generate PDF', style: TextStyle(color: Colors.white, fontSize: 12)),
             ),
           )
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -610,7 +616,7 @@ class _InspectionFormState extends State<InspectionForm> {
             ),
             const SizedBox(height: 32),
 
-            // General Conditions Block
+            // General Conditions Block - Responsive Layout
             Container(
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.grey.shade300),
@@ -625,59 +631,55 @@ class _InspectionFormState extends State<InspectionForm> {
                   
                   ..._conditions.map((cond) => Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8.0),
-                    child: Row(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          flex: 3,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(cond.title, style: const TextStyle(fontSize: 14, color: Colors.black87)),
-                              if (cond.subtitle.isNotEmpty)
-                                Text(cond.subtitle, style: const TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic)),
-                            ],
+                        Text(cond.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.black87)),
+                        if (cond.subtitle.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2.0),
+                            child: Text(cond.subtitle, style: const TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic)),
                           ),
-                        ),
-                        Expanded(
-                          flex: 2,
-                          child: Row(
-                            children: [
-                              Radio<bool>(
-                                value: true,
-                                groupValue: cond.isYes,
-                                activeColor: Colors.indigo,
-                                onChanged: (val) => setState(() => cond.isYes = val!),
-                              ),
-                              const Text('Yes'),
-                              const SizedBox(width: 8),
-                              Radio<bool>(
-                                value: false,
-                                groupValue: cond.isYes,
-                                activeColor: Colors.indigo,
-                                onChanged: (val) => setState(() => cond.isYes = val!),
-                              ),
-                              const Text('No'),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: SizedBox(
-                                  height: 36,
-                                  child: TextField(
-                                    controller: cond.remarksController,
-                                    decoration: InputDecoration(
-                                      hintText: 'Remarks',
-                                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(6),
-                                        borderSide: BorderSide(color: Colors.grey.shade300)
-                                      ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Radio<bool>(
+                              value: true,
+                              groupValue: cond.isYes,
+                              activeColor: Colors.indigo,
+                              visualDensity: VisualDensity.compact,
+                              onChanged: (val) => setState(() => cond.isYes = val!),
+                            ),
+                            const Text('Yes'),
+                            const SizedBox(width: 8),
+                            Radio<bool>(
+                              value: false,
+                              groupValue: cond.isYes,
+                              activeColor: Colors.indigo,
+                              visualDensity: VisualDensity.compact,
+                              onChanged: (val) => setState(() => cond.isYes = val!),
+                            ),
+                            const Text('No'),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: SizedBox(
+                                height: 38,
+                                child: TextField(
+                                  controller: cond.remarksController,
+                                  decoration: InputDecoration(
+                                    hintText: 'Remarks',
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(6),
+                                      borderSide: BorderSide(color: Colors.grey.shade300),
                                     ),
                                   ),
                                 ),
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
+                        if (_conditions.last != cond) const Divider(height: 24),
                       ],
                     ),
                   )).toList(),
@@ -788,7 +790,12 @@ class _InspectionFormState extends State<InspectionForm> {
                 children: const [
                   Icon(Icons.lock_outline, size: 16, color: Colors.grey),
                   SizedBox(width: 8),
-                  Text('Nothing is uploaded — photos, location and the report stay on this device.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  Expanded(
+                    child: Text(
+                      'Nothing is uploaded — photos, location and the report stay on this device.',
+                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ),
                 ],
               ),
             ),
