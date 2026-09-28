@@ -19,7 +19,7 @@ class InspectionApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Inspection Record Form',
-      debugShowCheckedModeBanner: false, // Removes the red "DEBUG" banner
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.indigo,
         scaffoldBackgroundColor: Colors.white,
@@ -256,7 +256,16 @@ class _InspectionFormState extends State<InspectionForm> {
 
   // Generate PDF
   Future<void> _generatePdf() async {
-    final pdf = pw.Document();
+    // Load Roboto fonts to prevent default Helvetica bold character issues
+    final regularFont = await PdfGoogleFonts.robotoRegular();
+    final boldFont = await PdfGoogleFonts.robotoBold();
+
+    final pdf = pw.Document(
+      theme: pw.ThemeData.withFont(
+        base: regularFont,
+        bold: boldFont,
+      ),
+    );
     
     final String startDateStr = DateFormat('dd/MM/yyyy').format(_startDate);
     final String endDateStr = DateFormat('dd/MM/yyyy').format(_endDate);
