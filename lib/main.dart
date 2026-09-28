@@ -384,11 +384,11 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
 
   // --- Bug Fix: UI Overflows solved using Flexible/Expanded ---
   Widget _buildConditionRow(String label) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        crossAxisAlignment: CrossAlignment.start,
-        children: [
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8.0),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start, // <-- Fixed
+      children: [
           Expanded(
             child: Text(
               label,
