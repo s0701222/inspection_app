@@ -85,7 +85,6 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
     _endTimeController.text = '10:00';
   }
 
-  // --- Bug Fix: Strict GPS Validation ---
   double? _parseExifGps(IfdTag? tag, IfdTag? refTag) {
     if (tag == null || tag.values == null) return null;
     try {
@@ -110,7 +109,6 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
 
       double result = degrees + (minutes / 60.0) + (seconds / 3600.0);
       
-      // Fallback for NaN or infinite coordinates
       if (result.isNaN || result.isInfinite) return null;
 
       if (refTag != null) {
@@ -125,7 +123,6 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
     }
   }
 
-  // --- Bug Fix: Exception handling for corrupted image bytes ---
   Future<void> _pickImages() async {
     final ImagePicker picker = ImagePicker();
     final List<XFile> pickedFiles = await picker.pickMultiImage();
@@ -171,7 +168,6 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
     }
   }
 
-  // --- Bug Fix: Robust live location fallback ---
   Future<String> _getSubmissionLocation() async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -382,13 +378,12 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
     );
   }
 
-  // --- Bug Fix: UI Overflows solved using Flexible/Expanded ---
   Widget _buildConditionRow(String label) {
-  return Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8.0),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start, // <-- Fixed
-      children: [
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           Expanded(
             child: Text(
               label,
@@ -447,6 +442,89 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // --- Inspection Details Input Section ---
+              Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Inspection Details', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _projectNoController,
+                        decoration: const InputDecoration(labelText: 'Project/Contract No.', border: OutlineInputBorder()),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _startDateController,
+                              decoration: const InputDecoration(labelText: 'Start Date', border: OutlineInputBorder()),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _endDateController,
+                              decoration: const InputDecoration(labelText: 'End Date', border: OutlineInputBorder()),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _startTimeController,
+                              decoration: const InputDecoration(labelText: 'Start Time', border: OutlineInputBorder()),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _endTimeController,
+                              decoration: const InputDecoration(labelText: 'End Time', border: OutlineInputBorder()),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _inspectionTypeController,
+                        decoration: const InputDecoration(labelText: 'Inspection Type', border: OutlineInputBorder()),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _itemInspectedController,
+                        decoration: const InputDecoration(labelText: 'Item Inspected', border: OutlineInputBorder()),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _findingsController,
+                        maxLines: 2,
+                        decoration: const InputDecoration(labelText: 'Inspection Findings/Results', border: OutlineInputBorder()),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _actionTakenController,
+                        maxLines: 2,
+                        decoration: const InputDecoration(labelText: 'Action Taken', border: OutlineInputBorder()),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _witnessingPartiesController,
+                        decoration: const InputDecoration(labelText: 'Other Witnessing Parties', border: OutlineInputBorder()),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+
               // General Conditions Section
               Card(
                 elevation: 2,
