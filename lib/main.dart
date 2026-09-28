@@ -19,7 +19,7 @@ class InspectionApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Inspection Record Form',
-      debugShowCheckedModeBanner: false, // Removes the red "DEBUG" banner
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.indigo,
         scaffoldBackgroundColor: Colors.white,
@@ -152,7 +152,7 @@ class _InspectionFormState extends State<InspectionForm> {
     }
   }
 
-  // Extract EXIF GPS and Capture Time (Falls back to 'N/A' if missing)
+  // Extract EXIF GPS and Capture Time
   Future<Map<String, String>> _extractPhotoExif(File file) async {
     try {
       final bytes = await file.readAsBytes();
@@ -162,16 +162,24 @@ class _InspectionFormState extends State<InspectionForm> {
       String? photoTime;
 
       if (data.containsKey('GPS GPSLatitude') && data.containsKey('GPS GPSLongitude')) {
-        final latValues = data['GPS GPSLatitude']?.values.toList();
+        final latTag = data['GPS GPSLatitude'];
+        final lngTag = data['GPS GPSLongitude'];
         final latRef = data['GPS GPSLatitudeRef']?.printable ?? 'N';
-        final lngValues = data['GPS GPSLongitude']?.values.toList();
         final lngRef = data['GPS GPSLongitudeRef']?.printable ?? 'E';
 
-        if (latValues != null && lngValues != null && latValues.length >= 3 && lngValues.length >= 3) {
-          double latDeg = _ratioToDouble(latValues[0]) + (_ratioToDouble(latValues[1]) / 60) + (_ratioToDouble(latValues[2]) / 3600);
-          double lngDeg = _ratioToDouble(lngValues[0]) + (_ratioToDouble(lngValues[1]) / 60) + (_ratioToDouble(lngValues[2]) / 3600);
+        if (latTag != null && lngTag != null) {
+          final List latValues = latTag.values.toList();
+          final List lngValues = lngTag.values.toList();
 
-          photoGps = '${latDeg.toStringAsFixed(6)}°$latRef, ${lngDeg.toStringAsFixed(6)}°$lngRef';
+          if (latValues.length >= 3 && lngValues.length >= 3) {
+            double latDeg = _ratioToDouble(latValues[0]) + (_ratioToDouble(latValues[1]) / 60.0) + (_ratioToDouble(latValues[2]) / 3600.0);
+            double lngDeg = _ratioToDouble(lngValues[0]) + (_ratioToDouble(lngValues[1]) / 60.0) + (_ratioToDouble(lngValues[2]) / 3600.0);
+
+            String latDir = latRef.contains('S') ? 'S' : 'N';
+            String lngDir = lngRef.contains('W') ? 'W' : 'E';
+
+            photoGps = '${latDeg.abs().toStringAsFixed(6)}°$latDir, ${lngDeg.abs().toStringAsFixed(6)}°$lngDir';
+          }
         }
       }
 
@@ -196,14 +204,17 @@ class _InspectionFormState extends State<InspectionForm> {
   double _ratioToDouble(dynamic value) {
     if (value is Ratio) {
       return value.toDouble();
+    } else if (value is num) {
+      return value.toDouble();
     }
     return 0.0;
   }
 
-  // Pick Images & Process Metadata
+  // Pick Images (Uncompressed to preserve EXIF metadata)
   Future<void> _pickImages() async {
     final ImagePicker picker = ImagePicker();
-    final List<XFile>? selectedImages = await picker.pickMultiImage(imageQuality: 70);
+    // Do NOT pass imageQuality here, as compressing re-encodes and strips EXIF tags!
+    final List<XFile>? selectedImages = await picker.pickMultiImage();
     if (selectedImages != null && selectedImages.isNotEmpty) {
       for (var xFile in selectedImages) {
         final exif = await _extractPhotoExif(File(xFile.path));
@@ -256,200 +267,228 @@ class _InspectionFormState extends State<InspectionForm> {
 
   // Generate PDF
   Future<void> _generatePdf() async {
-    final pdf = pw.Document();
-    
-    final String startDateStr = DateFormat('dd/MM/yyyy').format(_startDate);
-    final String endDateStr = DateFormat('dd/MM/yyyy').format(_endDate);
-    final String startTimeStr = _startTime != null 
-        ? '${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}' 
-        : '--:--';
-    final String endTimeStr = _endTime != null 
-        ? '${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}' 
-        : '--:--';
-    
-    final String submitTime = '${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now())} HKT';
+    try {
+      pw.Font regularFont;
+      pw.Font boldFont;
 
-    pw.Widget buildPdfTextField(String label, String value) {
-      return pw.Container(
-        margin: const pw.EdgeInsets.only(bottom: 12),
-        child: pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text(label, style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
-            pw.SizedBox(height: 4),
-            pw.Text(value.isEmpty ? 'Nil' : value, style: const pw.TextStyle(fontSize: 11)),
-          ]
-        )
+      try {
+        regularFont = await PdfGoogleFonts.robotoRegular();
+        boldFont = await PdfGoogleFonts.robotoBold();
+      } catch (_) {
+        regularFont = pw.Font.helvetica();
+        boldFont = pw.Font.helveticaBold();
+      }
+
+      final pdf = pw.Document(
+        theme: pw.ThemeData.withFont(
+          base: regularFont,
+          bold: boldFont,
+        ),
       );
-    }
+      
+      final String startDateStr = DateFormat('dd/MM/yyyy').format(_startDate);
+      final String endDateStr = DateFormat('dd/MM/yyyy').format(_endDate);
+      final String startTimeStr = _startTime != null 
+          ? '${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}' 
+          : '--:--';
+      final String endTimeStr = _endTime != null 
+          ? '${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}' 
+          : '--:--';
+      
+      final String submitTime = '${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now())} HKT';
 
-    pdf.addPage(
-      pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(40),
-        footer: (pw.Context context) {
-          return pw.Container(
-            margin: const pw.EdgeInsets.only(top: 10),
-            child: pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text('Submitted: $submitTime GPS: $_locationData', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
-                pw.Text('OP10-1', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
-              ]
-            )
-          );
-        },
-        build: (pw.Context context) {
-          return [
-            // Header
-            pw.Center(
-              child: pw.Text('Inspection Record Form', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
-            ),
-            pw.SizedBox(height: 20),
+      pw.Widget buildPdfTextField(String label, String value) {
+        return pw.Container(
+          margin: const pw.EdgeInsets.only(bottom: 12),
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(label, style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
+              pw.SizedBox(height: 4),
+              pw.Text(value.isEmpty ? 'Nil' : value, style: const pw.TextStyle(fontSize: 11)),
+            ]
+          )
+        );
+      }
 
-            // Basic Info Block
-            pw.Text('Project/Contract No.: ${_projectController.text}', style: const pw.TextStyle(fontSize: 11)),
-            pw.SizedBox(height: 4),
-            pw.Row(
-              children: [
-                pw.Expanded(child: pw.Text('Start Date: $startDateStr', style: const pw.TextStyle(fontSize: 11))),
-                pw.Expanded(child: pw.Text('End Date: $endDateStr', style: const pw.TextStyle(fontSize: 11))),
-              ],
-            ),
-            pw.SizedBox(height: 4),
-            pw.Row(
-              children: [
-                pw.Expanded(child: pw.Text('Start Time: $startTimeStr', style: const pw.TextStyle(fontSize: 11))),
-                pw.Expanded(child: pw.Text('End Time: $endTimeStr', style: const pw.TextStyle(fontSize: 11))),
-              ],
-            ),
-            pw.SizedBox(height: 4),
-            pw.Text('Inspection Type: $_inspectionType', style: const pw.TextStyle(fontSize: 11)),
-            pw.SizedBox(height: 20),
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(40),
+          footer: (pw.Context context) {
+            return pw.Container(
+              margin: const pw.EdgeInsets.only(top: 10),
+              child: pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('Submitted: $submitTime GPS: $_locationData', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+                  pw.Text('OP10-1', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+                ]
+              )
+            );
+          },
+          build: (pw.Context context) {
+            return [
+              // Header
+              pw.Center(
+                child: pw.Text('Inspection Record Form', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
+              ),
+              pw.SizedBox(height: 20),
 
-            // General Conditions Table
-            pw.Text('General Conditions', style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
-            pw.SizedBox(height: 8),
-            pw.Table(
-              border: pw.TableBorder.all(color: PdfColors.black, width: 0.5),
-              columnWidths: {
-                0: const pw.FlexColumnWidth(3.5),
-                1: const pw.FlexColumnWidth(1),
-                2: const pw.FlexColumnWidth(2),
-              },
-              children: [
-                pw.TableRow(
-                  decoration: const pw.BoxDecoration(color: PdfColors.grey200),
-                  children: [
-                    pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Item', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10))),
-                    pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Satisfactory', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10), textAlign: pw.TextAlign.center)),
-                    pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Remarks', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10))),
-                  ]
-                ),
-                ..._conditions.map((cond) => pw.TableRow(
-                  children: [
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(6),
-                      child: pw.Column(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Text(cond.title, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
-                          if (cond.subtitle.isNotEmpty) 
-                            pw.Container(
-                              margin: const pw.EdgeInsets.only(top: 2),
-                              child: pw.Text(cond.subtitle, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey800))
-                            ),
-                        ]
-                      )
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(6),
-                      child: pw.Center(child: pw.Text(cond.isYes ? 'Yes' : 'No', style: const pw.TextStyle(fontSize: 10)))
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(6),
-                      child: pw.Text(cond.remarksController.text.isEmpty ? '' : cond.remarksController.text, style: const pw.TextStyle(fontSize: 10))
-                    ),
-                  ]
-                )).toList(),
-              ]
-            ),
-            pw.SizedBox(height: 20),
+              // Basic Info Block
+              pw.Text('Project/Contract No.: ${_projectController.text}', style: const pw.TextStyle(fontSize: 11)),
+              pw.SizedBox(height: 4),
+              pw.Row(
+                children: [
+                  pw.Expanded(child: pw.Text('Start Date: $startDateStr', style: const pw.TextStyle(fontSize: 11))),
+                  pw.Expanded(child: pw.Text('End Date: $endDateStr', style: const pw.TextStyle(fontSize: 11))),
+                ],
+              ),
+              pw.SizedBox(height: 4),
+              pw.Row(
+                children: [
+                  pw.Expanded(child: pw.Text('Start Time: $startTimeStr', style: const pw.TextStyle(fontSize: 11))),
+                  pw.Expanded(child: pw.Text('End Time: $endTimeStr', style: const pw.TextStyle(fontSize: 11))),
+                ],
+              ),
+              pw.SizedBox(height: 4),
+              pw.Text('Inspection Type: $_inspectionType', style: const pw.TextStyle(fontSize: 11)),
+              pw.SizedBox(height: 20),
 
-            // Text Fields
-            buildPdfTextField('Item Inspected:', _itemInspectedController.text),
-            buildPdfTextField('Inspection Findings/Results:', _findingsController.text),
-            buildPdfTextField('Action Taken:', _actionTakenController.text),
-            buildPdfTextField('Other Witnessing Parties (if any):', _witnessingPartiesController.text),
-            
-            pw.SizedBox(height: 10),
-            pw.Text('Inspected by: ________________________', style: const pw.TextStyle(fontSize: 11)),
-            pw.SizedBox(height: 15),
-
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text('Approved by: ________________________', style: const pw.TextStyle(fontSize: 11)),
-                pw.Text('Signature Date: ________________________', style: const pw.TextStyle(fontSize: 11)),
-              ]
-            ),
-            
-            // Photos Attached Section
-            if (_photos.isNotEmpty) ...[
-              pw.NewPage(),
-              pw.Text('Photos Attached', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
-              pw.SizedBox(height: 10),
+              // General Conditions Table
+              pw.Text('General Conditions', style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+              pw.SizedBox(height: 8),
               pw.Table(
                 border: pw.TableBorder.all(color: PdfColors.black, width: 0.5),
                 columnWidths: {
-                  0: const pw.FlexColumnWidth(1),
+                  0: const pw.FlexColumnWidth(3.5),
                   1: const pw.FlexColumnWidth(1),
+                  2: const pw.FlexColumnWidth(2),
                 },
-                children: _photos.asMap().entries.map((entry) {
-                  int idx = entry.key;
-                  PhotoData item = entry.value;
-                  final imageBytes = File(item.file.path).readAsBytesSync();
-                  final pdfImage = pw.MemoryImage(imageBytes);
-
-                  return pw.TableRow(
+                children: [
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(color: PdfColors.grey200),
                     children: [
-                      // Image Cell
-                      pw.Container(
-                        padding: const pw.EdgeInsets.all(10),
-                        height: 200,
-                        alignment: pw.Alignment.center,
-                        child: pw.Image(pdfImage, fit: pw.BoxFit.contain),
-                      ),
-                      // Metadata Cell
-                      pw.Container(
-                        padding: const pw.EdgeInsets.all(12),
-                        alignment: pw.Alignment.topLeft,
+                      pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Item', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10))),
+                      pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Satisfactory', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10), textAlign: pw.TextAlign.center)),
+                      pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Remarks', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10))),
+                    ]
+                  ),
+                  ..._conditions.map((cond) => pw.TableRow(
+                    children: [
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
                         child: pw.Column(
                           crossAxisAlignment: pw.CrossAxisAlignment.start,
-                          mainAxisAlignment: pw.MainAxisAlignment.start,
                           children: [
-                            pw.Text('Photo ${idx + 1}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 12)),
-                            pw.SizedBox(height: 8),
-                            pw.Text('Time: ${item.photoTime}', style: const pw.TextStyle(fontSize: 10)),
-                            pw.SizedBox(height: 4),
-                            pw.Text('GPS: ${item.photoGps}', style: const pw.TextStyle(fontSize: 10)),
+                            pw.Text(cond.title, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                            if (cond.subtitle.isNotEmpty) 
+                              pw.Container(
+                                margin: const pw.EdgeInsets.only(top: 2),
+                                child: pw.Text(cond.subtitle, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey800))
+                              ),
                           ]
                         )
                       ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Center(child: pw.Text(cond.isYes ? 'Yes' : 'No', style: const pw.TextStyle(fontSize: 10)))
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(cond.remarksController.text.isEmpty ? '' : cond.remarksController.text, style: const pw.TextStyle(fontSize: 10))
+                      ),
                     ]
-                  );
-                }).toList(),
+                  )).toList(),
+                ]
               ),
-            ]
-          ];
-        },
-      ),
-    );
+              pw.SizedBox(height: 20),
 
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
-      name: 'Inspection_${DateFormat('yyyyMMdd').format(DateTime.now())}.pdf',
-    );
+              // Text Fields
+              buildPdfTextField('Item Inspected:', _itemInspectedController.text),
+              buildPdfTextField('Inspection Findings/Results:', _findingsController.text),
+              buildPdfTextField('Action Taken:', _actionTakenController.text),
+              buildPdfTextField('Other Witnessing Parties (if any):', _witnessingPartiesController.text),
+              
+              pw.SizedBox(height: 10),
+              pw.Text('Inspected by: ________________________', style: const pw.TextStyle(fontSize: 11)),
+              pw.SizedBox(height: 15),
+
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('Approved by: ________________________', style: const pw.TextStyle(fontSize: 11)),
+                  pw.Text('Signature Date: ________________________', style: const pw.TextStyle(fontSize: 11)),
+                ]
+              ),
+              
+              // Photos Attached Section
+              if (_photos.isNotEmpty) ...[
+                pw.NewPage(),
+                pw.Text('Photos Attached', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+                pw.SizedBox(height: 10),
+                pw.Table(
+                  border: pw.TableBorder.all(color: PdfColors.black, width: 0.5),
+                  columnWidths: {
+                    0: const pw.FlexColumnWidth(1),
+                    1: const pw.FlexColumnWidth(1),
+                  },
+                  children: _photos.asMap().entries.map((entry) {
+                    int idx = entry.key;
+                    PhotoData item = entry.value;
+                    final imageBytes = File(item.file.path).readAsBytesSync();
+                    final pdfImage = pw.MemoryImage(imageBytes);
+
+                    return pw.TableRow(
+                      children: [
+                        // Image Cell
+                        pw.Container(
+                          padding: const pw.EdgeInsets.all(10),
+                          height: 200,
+                          alignment: pw.Alignment.center,
+                          child: pw.Image(pdfImage, fit: pw.BoxFit.contain),
+                        ),
+                        // Metadata Cell
+                        pw.Container(
+                          padding: const pw.EdgeInsets.all(12),
+                          alignment: pw.Alignment.topLeft,
+                          child: pw.Column(
+                            crossAxisAlignment: pw.CrossAxisAlignment.start,
+                            mainAxisAlignment: pw.MainAxisAlignment.start,
+                            children: [
+                              pw.Text('Photo ${idx + 1}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 12)),
+                              pw.SizedBox(height: 8),
+                              pw.Text('Time: ${item.photoTime}', style: const pw.TextStyle(fontSize: 10)),
+                              pw.SizedBox(height: 4),
+                              pw.Text('GPS: ${item.photoGps}', style: const pw.TextStyle(fontSize: 10)),
+                            ]
+                          )
+                        ),
+                      ]
+                    );
+                  }).toList(),
+                ),
+              ]
+            ];
+          },
+        ),
+      );
+
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async => pdf.save(),
+        name: 'Inspection_${DateFormat('yyyyMMdd').format(DateTime.now())}.pdf',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error generating PDF: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
   }
 
   @override
