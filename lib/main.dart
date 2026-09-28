@@ -1,415 +1,448 @@
-import 'dart:typed_data';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:exif/exif.dart';
 import 'package:intl/intl.dart';
-import 'package:pdf/pdf.dart' as pw;
-import 'package:pdf/widgets.dart' as pww;
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:exif/exif.dart';
 
 void main() {
   runApp(const InspectionApp());
 }
 
 class InspectionApp extends StatelessWidget {
-  const InspectionApp({super.key});
+  const InspectionApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Inspection Record Form',
-      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
+        primarySwatch: Colors.indigo,
+        scaffoldBackgroundColor: Colors.white,
       ),
-      home: const InspectionFormPage(),
+      home: const InspectionForm(),
     );
   }
 }
 
+class ConditionItemModel {
+  final String title;
+  final String subtitle;
+  bool isYes;
+  final TextEditingController remarksController;
+
+  ConditionItemModel({
+    required this.title,
+    required this.subtitle,
+    this.isYes = true,
+    TextEditingController? remarksController,
+  }) : remarksController = remarksController ?? TextEditingController();
+}
+
 class PhotoData {
-  final Uint8List bytes;
-  final String timeStr;
-  final String gpsStr;
+  final XFile file;
+  final String photoGps;
+  final String photoTime;
 
   PhotoData({
-    required this.bytes,
-    required this.timeStr,
-    required this.gpsStr,
+    required this.file,
+    required this.photoGps,
+    required this.photoTime,
   });
 }
 
-class InspectionFormPage extends StatefulWidget {
-  const InspectionFormPage({super.key});
+class InspectionForm extends StatefulWidget {
+  const InspectionForm({Key? key}) : super(key: key);
 
   @override
-  State<InspectionFormPage> createState() => _InspectionFormPageState();
+  State<InspectionForm> createState() => _InspectionFormState();
 }
 
-class _InspectionFormPageState extends State<InspectionFormPage> {
-  final _formKey = GlobalKey<FormState>();
+class _InspectionFormState extends State<InspectionForm> {
+  // Form Controllers
+  final TextEditingController _projectController = TextEditingController();
+  final TextEditingController _itemInspectedController = TextEditingController();
+  final TextEditingController _findingsController = TextEditingController(text: 'Please refer to the photos attached');
+  final TextEditingController _actionTakenController = TextEditingController(text: 'Nil');
+  final TextEditingController _witnessingPartiesController = TextEditingController(text: 'Nil');
 
-  // Text Controllers
-  final _projectNoController = TextEditingController();
-  final _startDateController = TextEditingController();
-  final _endDateController = TextEditingController();
-  final _startTimeController = TextEditingController();
-  final _endTimeController = TextEditingController();
-  final _inspectionTypeController = TextEditingController(text: 'General');
-  final _itemInspectedController = TextEditingController();
-  final _findingsController = TextEditingController(text: 'Please refer to the photos attached');
-  final _actionTakenController = TextEditingController();
-  final _witnessingPartiesController = TextEditingController(text: 'Nil');
+  // Date & Time
+  DateTime _startDate = DateTime.now();
+  DateTime _endDate = DateTime.now();
+  TimeOfDay? _startTime;
+  TimeOfDay? _endTime;
 
-  // General Conditions
-  final Map<String, String> _generalConditions = {
-    'A. Site Safety (Including Accident/Fire Prevention, Environment/Hygiene/First-Aid At Workplace, Manual Handling And F&IU Regulations If Applicable)': 'Yes',
-    'B. Site Security/Cleanliness': 'Yes',
-    'C. Progress Against The Agreed Programme': 'Yes',
-    'D. Environmental Issue/Waste Management': 'Yes',
-    'E. Appropriate Workers With Adequate Protection (Including Personal Protective Equipment)': 'Yes',
-  };
+  // Inspection Type
+  String _inspectionType = 'General';
+  final List<String> _inspectionTypes = ['General', 'Safety', 'Environmental', 'Quality'];
 
-  final List<PhotoData> _photos = [];
-  bool _isGeneratingPdf = false;
+  // Conditions List
+  final List<ConditionItemModel> _conditions = [
+    ConditionItemModel(
+      title: 'A. Site Safety',
+      subtitle: '(Including Accident/Fire Prevention, Environment/Hygiene/First-Aid At Workplace, Manual Handling And F&IU Regulations If Applicable)',
+    ),
+    ConditionItemModel(
+      title: 'B. Site Security/Cleanliness',
+      subtitle: '',
+    ),
+    ConditionItemModel(
+      title: 'C. Progress Against The Agreed Programme',
+      subtitle: '',
+    ),
+    ConditionItemModel(
+      title: 'D. Environmental Issue/Waste Management',
+      subtitle: '',
+    ),
+    ConditionItemModel(
+      title: 'E. Appropriate Workers With Adequate Protection',
+      subtitle: '(Including Personal Protective Equipment)',
+    ),
+  ];
+
+  String _locationData = 'Fetching location...';
+  List<PhotoData> _photos = [];
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _startDateController.text = DateFormat('dd/MM/yyyy').format(now);
-    _endDateController.text = DateFormat('dd/MM/yyyy').format(now);
-    _startTimeController.text = '09:00';
-    _endTimeController.text = '10:00';
+    _getLocation();
   }
 
-  double? _parseExifGps(IfdTag? tag, IfdTag? refTag) {
-    if (tag == null || tag.values == null) return null;
+  // Live GPS Location for Device / Submission (Page 1 Footer)
+  Future<void> _getLocation() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() => _locationData = 'Location services disabled.');
+      return;
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() => _locationData = 'Location permissions denied');
+        return;
+      }
+    }
+    
+    if (permission == LocationPermission.deniedForever) {
+      setState(() => _locationData = 'Location permissions permanently denied.');
+      return;
+    } 
+
+    Position position = await Geolocator.getCurrentPosition();
+    setState(() {
+      String latDir = position.latitude >= 0 ? 'N' : 'S';
+      String lngDir = position.longitude >= 0 ? 'E' : 'W';
+      _locationData = '${position.latitude.abs().toStringAsFixed(6)}°$latDir, ${position.longitude.abs().toStringAsFixed(6)}°$lngDir';
+    });
+  }
+
+  // Extract EXIF GPS and Capture Time (Falls back to 'N/A' if missing)
+  Future<Map<String, String>> _extractPhotoExif(File file) async {
     try {
-      final values = tag.values.toList();
-      if (values.length < 3) return null;
-      
-      double parseRatio(dynamic val) {
-        if (val is num) return val.toDouble();
-        final s = val.toString();
-        if (s.contains('/')) {
-          final parts = s.split('/');
-          final num = double.tryParse(parts[0].trim()) ?? 0.0;
-          final den = double.tryParse(parts[1].trim()) ?? 1.0;
-          return den == 0 ? 0.0 : num / den;
-        }
-        return double.tryParse(s) ?? 0.0;
-      }
+      final bytes = await file.readAsBytes();
+      final data = await readExifFromBytes(bytes);
 
-      double degrees = parseRatio(values[0]);
-      double minutes = parseRatio(values[1]);
-      double seconds = parseRatio(values[2]);
+      String? photoGps;
+      String? photoTime;
 
-      double result = degrees + (minutes / 60.0) + (seconds / 3600.0);
-      
-      if (result.isNaN || result.isInfinite) return null;
+      if (data.containsKey('GPS GPSLatitude') && data.containsKey('GPS GPSLongitude')) {
+        final latValues = data['GPS GPSLatitude']?.values.toList();
+        final latRef = data['GPS GPSLatitudeRef']?.printable ?? 'N';
+        final lngValues = data['GPS GPSLongitude']?.values.toList();
+        final lngRef = data['GPS GPSLongitudeRef']?.printable ?? 'E';
 
-      if (refTag != null) {
-        String ref = refTag.toString().toUpperCase();
-        if (ref.contains('S') || ref.contains('W')) {
-          result = -result;
+        if (latValues != null && lngValues != null && latValues.length >= 3 && lngValues.length >= 3) {
+          double latDeg = _ratioToDouble(latValues[0]) + (_ratioToDouble(latValues[1]) / 60) + (_ratioToDouble(latValues[2]) / 3600);
+          double lngDeg = _ratioToDouble(lngValues[0]) + (_ratioToDouble(lngValues[1]) / 60) + (_ratioToDouble(lngValues[2]) / 3600);
+
+          photoGps = '${latDeg.toStringAsFixed(6)}°$latRef, ${lngDeg.toStringAsFixed(6)}°$lngRef';
         }
       }
-      return result;
+
+      if (data.containsKey('EXIF DateTimeOriginal')) {
+        photoTime = data['EXIF DateTimeOriginal']?.printable;
+      } else if (data.containsKey('Image DateTime')) {
+        photoTime = data['Image DateTime']?.printable;
+      }
+
+      return {
+        'gps': photoGps ?? 'N/A',
+        'time': photoTime ?? 'N/A',
+      };
     } catch (_) {
-      return null;
+      return {
+        'gps': 'N/A',
+        'time': 'N/A',
+      };
     }
   }
 
+  double _ratioToDouble(dynamic value) {
+    if (value is Ratio) {
+      return value.toDouble();
+    }
+    return 0.0;
+  }
+
+  // Pick Images & Process Metadata
   Future<void> _pickImages() async {
     final ImagePicker picker = ImagePicker();
-    final List<XFile> pickedFiles = await picker.pickMultiImage();
-    
-    if (pickedFiles.isEmpty) return;
-
-    for (var file in pickedFiles) {
-      try {
-        final bytes = await file.readAsBytes();
-        if (bytes.isEmpty) continue;
-
-        String timeStr = 'N/A';
-        String gpsStr = 'N/A';
-
-        try {
-          final tags = await readExifFromBytes(bytes);
-          
-          if (tags.containsKey('Image DateTime')) {
-            timeStr = tags['Image DateTime'].toString();
-          }
-
-          final lat = _parseExifGps(tags['GPS GPSLatitude'], tags['GPS GPSLatitudeRef']);
-          final lon = _parseExifGps(tags['GPS GPSLongitude'], tags['GPS GPSLongitudeRef']);
-
-          if (lat != null && lon != null && lat != 0.0 && lon != 0.0) {
-            gpsStr = '${lat.toStringAsFixed(4)}, ${lon.toStringAsFixed(4)}';
-          }
-        } catch (exifError) {
-          debugPrint('EXIF parsing failed: $exifError');
-        }
-
+    final List<XFile>? selectedImages = await picker.pickMultiImage();
+    if (selectedImages != null && selectedImages.isNotEmpty) {
+      for (var xFile in selectedImages) {
+        final exif = await _extractPhotoExif(File(xFile.path));
         setState(() {
-          _photos.add(PhotoData(bytes: bytes, timeStr: timeStr, gpsStr: gpsStr));
+          _photos.add(PhotoData(
+            file: xFile,
+            photoGps: exif['gps']!,
+            photoTime: exif['time']!,
+          ));
         });
-      } catch (e) {
-        debugPrint('Exception: Could not decompress image - $e');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to load image: ${file.name}')),
-          );
+      }
+    }
+  }
+
+  // Date Pickers
+  Future<void> _selectDate(BuildContext context, bool isStart) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: isStart ? _startDate : _endDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+    if (picked != null) {
+      setState(() {
+        if (isStart) {
+          _startDate = picked;
+        } else {
+          _endDate = picked;
         }
-      }
+      });
     }
   }
 
-  Future<String> _getSubmissionLocation() async {
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return 'Location services disabled.';
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) return 'Location permission denied.';
-      }
-      if (permission == LocationPermission.deniedForever) {
-        return 'Location permission permanently denied.';
-      }
-
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-        timeLimit: const Duration(seconds: 5),
-      );
-      
-      return '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
-    } catch (_) {
-      return 'Location unavailable.';
+  // Time Pickers
+  Future<void> _selectTime(BuildContext context, bool isStart) async {
+    final TimeOfDay? picked = await showTimePicker(
+      context: context,
+      initialTime: isStart ? (_startTime ?? TimeOfDay.now()) : (_endTime ?? TimeOfDay.now()),
+    );
+    if (picked != null) {
+      setState(() {
+        if (isStart) {
+          _startTime = picked;
+        } else {
+          _endTime = picked;
+        }
+      });
     }
   }
 
+  // Generate PDF
   Future<void> _generatePdf() async {
-    setState(() => _isGeneratingPdf = true);
+    final pdf = pw.Document();
     
-    final pdf = pww.Document();
-    final submissionTime = DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now());
-    final liveLocation = await _getSubmissionLocation();
-    final footerText = 'Submitted: $submissionTime HKT GPS: $liveLocation';
+    final String startDateStr = DateFormat('dd/MM/yyyy').format(_startDate);
+    final String endDateStr = DateFormat('dd/MM/yyyy').format(_endDate);
+    final String startTimeStr = _startTime != null 
+        ? '${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}' 
+        : '--:--';
+    final String endTimeStr = _endTime != null 
+        ? '${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}' 
+        : '--:--';
+    
+    final String submitTime = '${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now())} HKT';
 
-    // Page 1: Form Data
-    pdf.addPage(
-      pww.MultiPage(
-        pageFormat: pw.PdfPageFormat.a4,
-        margin: const pww.EdgeInsets.all(32),
-        footer: (context) => pww.Row(
-          mainAxisAlignment: pww.MainAxisAlignment.spaceBetween,
+    pw.Widget buildPdfTextField(String label, String value) {
+      return pw.Container(
+        margin: const pw.EdgeInsets.only(bottom: 12),
+        child: pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
-            pww.Text(footerText, style: const pww.TextStyle(fontSize: 8)),
-            pww.Text('OP10-1', style: const pww.TextStyle(fontSize: 8)),
-          ],
-        ),
-        build: (context) => [
-          pww.Center(
-            child: pww.Text('Inspection Record Form', style: pww.TextStyle(fontSize: 18, fontWeight: pww.FontWeight.bold)),
-          ),
-          pww.SizedBox(height: 20),
-          _buildPdfHeaderData(),
-          pww.SizedBox(height: 10),
-          _buildPdfGeneralConditions(),
-          pww.SizedBox(height: 10),
-          _buildPdfTextRow('Item Inspected:', _itemInspectedController.text.isEmpty ? 'Nil' : _itemInspectedController.text),
-          _buildPdfTextRow('Inspection Findings/Results:', _findingsController.text),
-          _buildPdfTextRow('Action Taken:', _actionTakenController.text.isEmpty ? 'Nil' : _actionTakenController.text),
-          _buildPdfTextRow('Other Witnessing Parties (if any):', _witnessingPartiesController.text),
-          pww.SizedBox(height: 30),
-          pww.Row(
-            mainAxisAlignment: pww.MainAxisAlignment.spaceBetween,
-            children: [
-              pww.Text('Inspected by: ________________________'),
-              pww.Text('Approved by: ________________________'),
-            ],
-          ),
-          pww.SizedBox(height: 10),
-          pww.Align(
-            alignment: pww.Alignment.centerRight,
-            child: pww.Text('Signature Date: ________________________'),
-          )
-        ],
+            pw.Text(label, style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
+            pw.SizedBox(height: 4),
+            pw.Text(value.isEmpty ? 'Nil' : value, style: const pw.TextStyle(fontSize: 11)),
+          ]
+        )
+      );
+    }
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(40),
+        footer: (pw.Context context) {
+          return pw.Container(
+            margin: const pw.EdgeInsets.only(top: 10),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                // Retains live device location for Page 1 footer
+                pw.Text('Submitted: $submitTime GPS: $_locationData', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+                pw.Text('OP10-1', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
+              ]
+            )
+          );
+        },
+        build: (pw.Context context) {
+          return [
+            // Header
+            pw.Center(
+              child: pw.Text('Inspection Record Form', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
+            ),
+            pw.SizedBox(height: 20),
+
+            // Basic Info Block
+            pw.Text('Project/Contract No.: ${_projectController.text}', style: const pw.TextStyle(fontSize: 11)),
+            pw.SizedBox(height: 4),
+            pw.Row(
+              children: [
+                pw.Expanded(child: pw.Text('Start Date: $startDateStr', style: const pw.TextStyle(fontSize: 11))),
+                pw.Expanded(child: pw.Text('End Date: $endDateStr', style: const pw.TextStyle(fontSize: 11))),
+              ],
+            ),
+            pw.SizedBox(height: 4),
+            pw.Row(
+              children: [
+                pw.Expanded(child: pw.Text('Start Time: $startTimeStr', style: const pw.TextStyle(fontSize: 11))),
+                pw.Expanded(child: pw.Text('End Time: $endTimeStr', style: const pw.TextStyle(fontSize: 11))),
+              ],
+            ),
+            pw.SizedBox(height: 4),
+            pw.Text('Inspection Type: $_inspectionType', style: const pw.TextStyle(fontSize: 11)),
+            pw.SizedBox(height: 20),
+
+            // General Conditions Table
+            pw.Text('General Conditions', style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+            pw.SizedBox(height: 8),
+            pw.Table(
+              border: pw.TableBorder.all(color: PdfColors.black, width: 0.5),
+              columnWidths: {
+                0: const pw.FlexColumnWidth(3.5),
+                1: const pw.FlexColumnWidth(1),
+                2: const pw.FlexColumnWidth(2),
+              },
+              children: [
+                pw.TableRow(
+                  decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                  children: [
+                    pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Item', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10))),
+                    pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Satisfactory', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10), textAlign: pw.TextAlign.center)),
+                    pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('Remarks', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10))),
+                  ]
+                ),
+                ..._conditions.map((cond) => pw.TableRow(
+                  children: [
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.all(6),
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text(cond.title, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                          if (cond.subtitle.isNotEmpty) 
+                            pw.Container(
+                              margin: const pw.EdgeInsets.only(top: 2),
+                              child: pw.Text(cond.subtitle, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey800))
+                            ),
+                        ]
+                      )
+                    ),
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.all(6),
+                      child: pw.Center(child: pw.Text(cond.isYes ? 'Yes' : 'No', style: const pw.TextStyle(fontSize: 10)))
+                    ),
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.all(6),
+                      child: pw.Text(cond.remarksController.text.isEmpty ? '' : cond.remarksController.text, style: const pw.TextStyle(fontSize: 10))
+                    ),
+                  ]
+                )).toList(),
+              ]
+            ),
+            pw.SizedBox(height: 20),
+
+            // Text Fields
+            buildPdfTextField('Item Inspected:', _itemInspectedController.text),
+            buildPdfTextField('Inspection Findings/Results:', _findingsController.text),
+            buildPdfTextField('Action Taken:', _actionTakenController.text),
+            buildPdfTextField('Other Witnessing Parties (if any):', _witnessingPartiesController.text),
+            
+            pw.SizedBox(height: 10),
+            pw.Text('Inspected by: ________________________', style: const pw.TextStyle(fontSize: 11)),
+            pw.SizedBox(height: 15),
+
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text('Approved by: ________________________', style: const pw.TextStyle(fontSize: 11)),
+                pw.Text('Signature Date: ________________________', style: const pw.TextStyle(fontSize: 11)),
+              ]
+            ),
+            
+            // Photos Attached Section (EXIF metadata parsed with 'N/A' fallbacks)
+            if (_photos.isNotEmpty) ...[
+              pw.NewPage(),
+              pw.Text('Photos Attached', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+              pw.SizedBox(height: 10),
+              pw.Table(
+                border: pw.TableBorder.all(color: PdfColors.black, width: 0.5),
+                columnWidths: {
+                  0: const pw.FlexColumnWidth(1),
+                  1: const pw.FlexColumnWidth(1),
+                },
+                children: _photos.asMap().entries.map((entry) {
+                  int idx = entry.key;
+                  PhotoData item = entry.value;
+                  final imageBytes = File(item.file.path).readAsBytesSync();
+                  final pdfImage = pw.MemoryImage(imageBytes);
+
+                  return pw.TableRow(
+                    children: [
+                      // Image Cell
+                      pw.Container(
+                        padding: const pw.EdgeInsets.all(10),
+                        height: 200,
+                        alignment: pw.Alignment.center,
+                        child: pw.Image(pdfImage, fit: pw.BoxFit.contain),
+                      ),
+                      // Metadata Cell
+                      pw.Container(
+                        padding: const pw.EdgeInsets.all(12),
+                        alignment: pw.Alignment.topLeft,
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          mainAxisAlignment: pw.MainAxisAlignment.start,
+                          children: [
+                            pw.Text('Photo ${idx + 1}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 12)),
+                            pw.SizedBox(height: 8),
+                            pw.Text('Time: ${item.photoTime}', style: const pw.TextStyle(fontSize: 10)),
+                            pw.SizedBox(height: 4),
+                            pw.Text('GPS: ${item.photoGps}', style: const pw.TextStyle(fontSize: 10)),
+                          ]
+                        )
+                      ),
+                    ]
+                  );
+                }).toList(),
+              ),
+            ]
+          ];
+        },
       ),
     );
-
-    // Page 2+: Photos
-    if (_photos.isNotEmpty) {
-      pdf.addPage(
-        pww.MultiPage(
-          pageFormat: pw.PdfPageFormat.a4,
-          margin: const pww.EdgeInsets.all(32),
-          footer: (context) => pww.Row(
-            mainAxisAlignment: pww.MainAxisAlignment.spaceBetween,
-            children: [
-              pww.Text(footerText, style: const pww.TextStyle(fontSize: 8)),
-              pww.Text('OP10-1', style: const pww.TextStyle(fontSize: 8)),
-            ],
-          ),
-          build: (context) => [
-            pww.Text('Photos Attached', style: pww.TextStyle(fontSize: 14, fontWeight: pww.FontWeight.bold)),
-            pww.SizedBox(height: 10),
-            pww.Table(
-              border: pww.TableBorder.all(),
-              children: _photos.asMap().entries.map((entry) {
-                int idx = entry.key;
-                PhotoData photo = entry.value;
-                pww.MemoryImage? memImg;
-                
-                try {
-                  memImg = pww.MemoryImage(photo.bytes);
-                } catch (e) {
-                  debugPrint('PDF Image parsing error: $e');
-                }
-
-                return pww.TableRow(
-                  children: [
-                    pww.Padding(
-                      padding: const pww.EdgeInsets.all(8),
-                      child: memImg != null 
-                          ? pww.Image(memImg, height: 150, fit: pww.BoxFit.contain)
-                          : pww.Text('Image failed to load', style: const pww.TextStyle(color: pw.PdfColors.red)),
-                    ),
-                    pww.Padding(
-                      padding: const pww.EdgeInsets.all(8),
-                      child: pww.Column(
-                        crossAxisAlignment: pww.CrossAxisAlignment.start,
-                        children: [
-                          pww.Text('Photo ${idx + 1}', style: pww.TextStyle(fontWeight: pww.FontWeight.bold)),
-                          pww.SizedBox(height: 4),
-                          pww.Text('Time: ${photo.timeStr}'),
-                          pww.Text('GPS: ${photo.gpsStr}'),
-                        ],
-                      ),
-                    ),
-                  ],
-                );
-              }).toList(),
-            ),
-          ],
-        ),
-      );
-    }
-
-    setState(() => _isGeneratingPdf = false);
 
     await Printing.layoutPdf(
-      onLayout: (pw.PdfPageFormat format) async => pdf.save(),
-    );
-  }
-
-  pww.Widget _buildPdfHeaderData() {
-    return pww.Row(
-      mainAxisAlignment: pww.MainAxisAlignment.spaceBetween,
-      children: [
-        pww.Column(
-          crossAxisAlignment: pww.CrossAxisAlignment.start,
-          children: [
-            pww.Text('Project/Contract No.: ${_projectNoController.text}'),
-            pww.Text('Start Date: ${_startDateController.text}'),
-            pww.Text('Start Time: ${_startTimeController.text}'),
-            pww.Text('Inspection Type: ${_inspectionTypeController.text}'),
-          ],
-        ),
-        pww.Column(
-          crossAxisAlignment: pww.CrossAxisAlignment.start,
-          children: [
-            pww.Text('End Date: ${_endDateController.text}'),
-            pww.Text('End Time: ${_endTimeController.text}'),
-          ],
-        ),
-      ],
-    );
-  }
-
-  pww.Widget _buildPdfGeneralConditions() {
-    return pww.Column(
-      crossAxisAlignment: pww.CrossAxisAlignment.start,
-      children: [
-        pww.Text('General Conditions', style: pww.TextStyle(fontWeight: pww.FontWeight.bold)),
-        pww.SizedBox(height: 5),
-        pww.Table(
-          border: pww.TableBorder.all(),
-          columnWidths: {
-            0: const pww.FlexColumnWidth(3),
-            1: const pww.FlexColumnWidth(1),
-            2: const pww.FlexColumnWidth(1),
-          },
-          children: [
-            pww.TableRow(
-              children: ['Item', 'Satisfactory', 'Remarks'].map((t) => pww.Padding(
-                padding: const pww.EdgeInsets.all(4), 
-                child: pww.Text(t, style: pww.TextStyle(fontWeight: pww.FontWeight.bold))
-              )).toList(),
-            ),
-            ..._generalConditions.entries.map((e) => pww.TableRow(
-              children: [
-                pww.Padding(padding: const pww.EdgeInsets.all(4), child: pww.Text(e.key, style: const pww.TextStyle(fontSize: 8))),
-                pww.Padding(padding: const pww.EdgeInsets.all(4), child: pww.Center(child: pww.Text(e.value))),
-                pww.Padding(padding: const pww.EdgeInsets.all(4), child: pww.Text('')),
-              ],
-            )),
-          ],
-        ),
-      ],
-    );
-  }
-
-  pww.Widget _buildPdfTextRow(String label, String value) {
-    return pww.Padding(
-      padding: const pww.EdgeInsets.only(top: 8),
-      child: pww.Column(
-        crossAxisAlignment: pww.CrossAxisAlignment.start,
-        children: [
-          pww.Text(label, style: pww.TextStyle(fontWeight: pww.FontWeight.bold)),
-          pww.Text(value),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildConditionRow(String label) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(fontSize: 14, color: Colors.black87),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Radio<String>(
-                value: 'Yes',
-                groupValue: _generalConditions[label],
-                onChanged: (val) => setState(() => _generalConditions[label] = val!),
-              ),
-              const Text('Yes'),
-              Radio<String>(
-                value: 'No',
-                groupValue: _generalConditions[label],
-                onChanged: (val) => setState(() => _generalConditions[label] = val!),
-              ),
-              const Text('No'),
-            ],
-          ),
-        ],
-      ),
+      onLayout: (PdfPageFormat format) async => pdf.save(),
+      name: 'Inspection_${DateFormat('yyyyMMdd').format(DateTime.now())}.pdf',
     );
   }
 
@@ -417,196 +450,342 @@ class _InspectionFormPageState extends State<InspectionFormPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Inspection Record'),
+        title: Row(
+          children: const [
+            Icon(Icons.description, color: Colors.blueAccent),
+            SizedBox(width: 8),
+            Text('Inspection Record Form', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        backgroundColor: Colors.white,
+        elevation: 1,
         actions: [
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: ElevatedButton.icon(
-              onPressed: _isGeneratingPdf ? null : _generatePdf,
-              icon: _isGeneratingPdf 
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.download),
-              label: const Text('Generate PDF'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.indigo,
-                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
               ),
+              onPressed: _generatePdf,
+              icon: const Icon(Icons.download, color: Colors.white, size: 18),
+              label: const Text('Generate PDF', style: TextStyle(color: Colors.white)),
             ),
           )
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // --- Inspection Details Input Section ---
-              Card(
-                elevation: 2,
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Project/Contract No. *', style: TextStyle(fontWeight: FontWeight.w500)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _projectController,
+              decoration: const InputDecoration(hintText: 'e.g. HK/2026/0042', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 20),
+
+            // Dates
+            Row(
+              children: [
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Inspection Details', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _projectNoController,
-                        decoration: const InputDecoration(labelText: 'Project/Contract No.', border: OutlineInputBorder()),
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextFormField(
-                              controller: _startDateController,
-                              decoration: const InputDecoration(labelText: 'Start Date', border: OutlineInputBorder()),
-                            ),
+                      const Text('Start Date'),
+                      const SizedBox(height: 8),
+                      InkWell(
+                        onTap: () => _selectDate(context, true),
+                        child: InputDecorator(
+                          decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14)),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(DateFormat('dd/MM/yyyy').format(_startDate)),
+                              const Icon(Icons.calendar_today, size: 20),
+                            ],
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextFormField(
-                              controller: _endDateController,
-                              decoration: const InputDecoration(labelText: 'End Date', border: OutlineInputBorder()),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextFormField(
-                              controller: _startTimeController,
-                              decoration: const InputDecoration(labelText: 'Start Time', border: OutlineInputBorder()),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextFormField(
-                              controller: _endTimeController,
-                              decoration: const InputDecoration(labelText: 'End Time', border: OutlineInputBorder()),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _inspectionTypeController,
-                        decoration: const InputDecoration(labelText: 'Inspection Type', border: OutlineInputBorder()),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _itemInspectedController,
-                        decoration: const InputDecoration(labelText: 'Item Inspected', border: OutlineInputBorder()),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _findingsController,
-                        maxLines: 2,
-                        decoration: const InputDecoration(labelText: 'Inspection Findings/Results', border: OutlineInputBorder()),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _actionTakenController,
-                        maxLines: 2,
-                        decoration: const InputDecoration(labelText: 'Action Taken', border: OutlineInputBorder()),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _witnessingPartiesController,
-                        decoration: const InputDecoration(labelText: 'Other Witnessing Parties', border: OutlineInputBorder()),
+                        ),
                       ),
                     ],
-                  ),
+                  )
                 ),
-              ),
-              const SizedBox(height: 20),
-
-              // General Conditions Section
-              Card(
-                elevation: 2,
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
+                const SizedBox(width: 16),
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('General Conditions', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 10),
-                      ..._generalConditions.keys.map((key) => _buildConditionRow(key)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // Photos Section
-              const Text('Photos', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              GestureDetector(
-                onTap: _pickImages,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey.shade400, width: 1),
-                    borderRadius: BorderRadius.circular(8),
-                    color: Colors.grey.shade50,
-                  ),
-                  child: const Column(
-                    children: [
-                      Icon(Icons.camera_alt, size: 40, color: Colors.grey),
-                      SizedBox(height: 8),
-                      Text('Tap to take or upload photos', style: TextStyle(fontSize: 16, color: Colors.indigo)),
-                      SizedBox(height: 4),
-                      Text('EXIF GPS and timestamp captured from photo file (shows N/A if missing)', 
-                        textAlign: TextAlign.center, 
-                        style: TextStyle(color: Colors.grey, fontSize: 12)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              
-              if (_photos.isNotEmpty)
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _photos.map((photo) => Stack(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.memory(
-                          photo.bytes,
-                          width: 100,
-                          height: 100,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => 
-                            Container(
-                              width: 100, height: 100, color: Colors.red.shade100,
-                              child: const Icon(Icons.broken_image, color: Colors.red),
-                            ),
+                      const Text('End Date'),
+                      const SizedBox(height: 8),
+                      InkWell(
+                        onTap: () => _selectDate(context, false),
+                        child: InputDecorator(
+                          decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14)),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(DateFormat('dd/MM/yyyy').format(_endDate)),
+                              const Icon(Icons.calendar_today, size: 20),
+                            ],
+                          ),
                         ),
                       ),
-                      Positioned(
-                        right: 0,
-                        top: 0,
-                        child: IconButton(
-                          icon: const Icon(Icons.cancel, color: Colors.red),
-                          onPressed: () {
-                            setState(() {
-                              _photos.remove(photo);
-                            });
-                          },
-                        ),
-                      )
                     ],
+                  )
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Times
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Start Time'),
+                      const SizedBox(height: 8),
+                      InkWell(
+                        onTap: () => _selectTime(context, true),
+                        child: InputDecorator(
+                          decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14)),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(_startTime != null ? _startTime!.format(context) : '--:--'),
+                              const Icon(Icons.access_time, size: 20),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('End Time'),
+                      const SizedBox(height: 8),
+                      InkWell(
+                        onTap: () => _selectTime(context, false),
+                        child: InputDecorator(
+                          decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14)),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(_endTime != null ? _endTime!.format(context) : '--:--'),
+                              const Icon(Icons.access_time, size: 20),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Inspection Type
+            const Text('Inspection Type'),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: _inspectionType,
+              decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12)),
+              items: _inspectionTypes.map((type) => DropdownMenuItem(value: type, child: Text(type))).toList(),
+              onChanged: (val) => setState(() => _inspectionType = val!),
+            ),
+            const SizedBox(height: 32),
+
+            // General Conditions Block
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('General Conditions', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  
+                  ..._conditions.map((cond) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(cond.title, style: const TextStyle(fontSize: 14, color: Colors.black87)),
+                              if (cond.subtitle.isNotEmpty)
+                                Text(cond.subtitle, style: const TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic)),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Row(
+                            children: [
+                              Radio<bool>(
+                                value: true,
+                                groupValue: cond.isYes,
+                                activeColor: Colors.indigo,
+                                onChanged: (val) => setState(() => cond.isYes = val!),
+                              ),
+                              const Text('Yes'),
+                              const SizedBox(width: 8),
+                              Radio<bool>(
+                                value: false,
+                                groupValue: cond.isYes,
+                                activeColor: Colors.indigo,
+                                onChanged: (val) => setState(() => cond.isYes = val!),
+                              ),
+                              const Text('No'),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: SizedBox(
+                                  height: 36,
+                                  child: TextField(
+                                    controller: cond.remarksController,
+                                    decoration: InputDecoration(
+                                      hintText: 'Remarks',
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(6),
+                                        borderSide: BorderSide(color: Colors.grey.shade300)
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   )).toList(),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Text Inputs
+            const Text('Item Inspected', style: TextStyle(fontWeight: FontWeight.w500)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _itemInspectedController,
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+              maxLines: 4,
+            ),
+            const SizedBox(height: 20),
+
+            const Text('Inspection Findings/Results', style: TextStyle(fontWeight: FontWeight.w500)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _findingsController,
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+              maxLines: 4,
+            ),
+            const SizedBox(height: 20),
+
+            const Text('Action Taken', style: TextStyle(fontWeight: FontWeight.w500)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _actionTakenController,
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 20),
+
+            const Text('Other Witnessing Parties (if any)', style: TextStyle(fontWeight: FontWeight.w500)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _witnessingPartiesController,
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 24),
+
+            // Photos Section 
+            const Text('Photos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            InkWell(
+              onTap: _pickImages,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  border: Border.all(color: Colors.grey.shade400),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-            ],
-          ),
+                child: Column(
+                  children: const [
+                    Icon(Icons.camera_alt_outlined, size: 36, color: Colors.blueGrey),
+                    SizedBox(height: 12),
+                    Text('Tap to take or upload photos', style: TextStyle(color: Colors.blueGrey, fontSize: 16)),
+                    SizedBox(height: 4),
+                    Text('EXIF GPS and timestamp captured from photo file (shows N/A if missing)', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Image Preview Block
+            if (_photos.isNotEmpty)
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: _photos.map((item) => Stack(
+                  alignment: Alignment.topRight,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.file(File(item.file.path), width: 120, height: 120, fit: BoxFit.cover),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(4.0),
+                      child: CircleAvatar(
+                        radius: 14,
+                        backgroundColor: Colors.white,
+                        child: IconButton(
+                          padding: EdgeInsets.zero,
+                          icon: const Icon(Icons.close, color: Colors.red, size: 18),
+                          onPressed: () => setState(() => _photos.remove(item)),
+                        ),
+                      ),
+                    )
+                  ],
+                )).toList(),
+              ),
+            const SizedBox(height: 24),
+
+            // Privacy Notice
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: const [
+                  Icon(Icons.lock_outline, size: 16, color: Colors.grey),
+                  SizedBox(width: 8),
+                  Text('Nothing is uploaded — photos, location and the report stay on this device.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 60),
+          ],
         ),
       ),
     );
