@@ -280,8 +280,8 @@ class _InspectionFormState extends State<InspectionForm> {
     }
   }
 
-  // PDF Generation
-  Future<void> _generatePdf() async {
+  // PDF Generation & Direct Export (Selectable Vector Text)
+  Future<void> _generatePdf({bool shareDirectly = true}) async {
     if (_isGenerating) return;
     
     bool locationRetrieved = await _ensureLocationPermissionAndGetLocation(promptSettings: true);
@@ -459,7 +459,6 @@ class _InspectionFormState extends State<InspectionForm> {
                     PhotoData item = entry.value;
                     final pdfImage = preloadedPdfImages[idx];
 
-                    // Prepare Maps URL if valid GPS data exists
                     final String? mapsUrl = (item.photoGps != 'N/A' && item.latitude != null && item.longitude != null)
                         ? 'https://www.google.com/maps/search/?api=1&query=${item.latitude},${item.longitude}'
                         : null;
@@ -485,7 +484,6 @@ class _InspectionFormState extends State<InspectionForm> {
                               pw.SizedBox(height: 4),
                               pw.Text('GPS: ${item.photoGps}', style: const pw.TextStyle(fontSize: 10)),
                               
-                              // Display raw URL directly if valid
                               if (mapsUrl != null) ...[
                                 pw.SizedBox(height: 4),
                                 pw.UrlLink(
@@ -513,10 +511,16 @@ class _InspectionFormState extends State<InspectionForm> {
         ),
       );
 
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdf.save(),
-        name: 'Inspection_${DateFormat('yyyyMMdd').format(DateTime.now())}.pdf',
-      );
+      final pdfBytes = await pdf.save();
+      final String filename = 'Inspection_${DateFormat('yyyyMMdd').format(DateTime.now())}.pdf';
+
+      if (shareDirectly) {
+        // Export file directly via Share Sheet -> Enables opening in Acrobat / Files with fully selectable text
+        await Printing.sharePdf(bytes: pdfBytes, filename: filename);
+      } else {
+        // Print Spool Preview
+        await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdfBytes, name: filename);
+      }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error generating PDF: $e'), backgroundColor: Colors.red));
     } finally {
@@ -540,20 +544,38 @@ class _InspectionFormState extends State<InspectionForm> {
         elevation: 1,
         actions: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+            padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
             child: ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
                 backgroundColor: _isGenerating ? Colors.grey : Colors.indigo,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
               ),
-              onPressed: _isGenerating ? null : _generatePdf,
+              onPressed: _isGenerating ? null : () => _generatePdf(shareDirectly: true),
               icon: _isGenerating 
                   ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : const Icon(Icons.download, color: Colors.white, size: 16),
-              label: Text(_isGenerating ? 'Processing...' : 'Generate PDF', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                  : const Icon(Icons.share, color: Colors.white, size: 16),
+              label: Text(_isGenerating ? 'Processing...' : 'Export PDF', style: const TextStyle(color: Colors.white, fontSize: 12)),
             ),
-          )
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.black87),
+            onSelected: (value) {
+              if (value == 'print') _generatePdf(shareDirectly: false);
+            },
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(
+                value: 'print',
+                child: Row(
+                  children: [
+                    Icon(Icons.print, size: 18, color: Colors.indigo),
+                    SizedBox(width: 8),
+                    Text('Print / Preview'),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       body: SingleChildScrollView(
