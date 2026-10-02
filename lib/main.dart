@@ -459,6 +459,11 @@ class _InspectionFormState extends State<InspectionForm> {
                     PhotoData item = entry.value;
                     final pdfImage = preloadedPdfImages[idx];
 
+                    // Prepare Maps URL if valid GPS data exists
+                    final String? mapsUrl = (item.photoGps != 'N/A' && item.latitude != null && item.longitude != null)
+                        ? 'https://www.google.com/maps/search/?api=1&query=${item.latitude},${item.longitude}'
+                        : null;
+
                     return pw.TableRow(
                       children: [
                         pw.Container(
@@ -480,15 +485,15 @@ class _InspectionFormState extends State<InspectionForm> {
                               pw.SizedBox(height: 4),
                               pw.Text('GPS: ${item.photoGps}', style: const pw.TextStyle(fontSize: 10)),
                               
-                              // Conditionally display the Google Maps link ONLY when valid GPS data exists
-                              if (item.photoGps != 'N/A' && item.latitude != null && item.longitude != null) ...[
+                              // Display raw URL directly if valid
+                              if (mapsUrl != null) ...[
                                 pw.SizedBox(height: 4),
                                 pw.UrlLink(
-                                  destination: 'https://www.google.com/maps/search/?api=1&query=${item.latitude},${item.longitude}',
+                                  destination: mapsUrl,
                                   child: pw.Text(
-                                    'View on Google Maps',
+                                    mapsUrl,
                                     style: const pw.TextStyle(
-                                      fontSize: 10,
+                                      fontSize: 8,
                                       color: PdfColors.blue,
                                       decoration: pw.TextDecoration.underline,
                                     ),
