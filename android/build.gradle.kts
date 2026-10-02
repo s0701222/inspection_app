@@ -25,10 +25,26 @@ tasks.register<Delete>("clean") {
 }
 
 subprojects {
-    plugins.withId("com.android.library") {
-        (extensions.findByName("android") as? com.android.build.gradle.BaseExtension)?.compileSdkVersion(34)
+    val projectRef = this
+    val configureAndroid = Action<Project> {
+        val androidExtension = extensions.findByName("android")
+        if (androidExtension != null) {
+            try {
+                val method = androidExtension.javaClass.getMethod("compileSdkVersion", Int::class.javaPrimitiveType)
+                method.invoke(androidExtension, 36)
+            } catch (e: Exception) {
+                try {
+                    val setter = androidExtension.javaClass.getMethod("setCompileSdk", Int::class.javaPrimitiveType)
+                    setter.invoke(androidExtension, 36)
+                } catch (ignored: Exception) {}
+            }
+        }
     }
-    plugins.withId("com.android.application") {
-        (extensions.findByName("android") as? com.android.build.gradle.BaseExtension)?.compileSdkVersion(34)
+
+    if (state.executed) {
+        configureAndroid.execute(projectRef)
+    } else {
+        plugins.withId("com.android.library") { configureAndroid.execute(projectRef) }
+        plugins.withId("com.android.application") { configureAndroid.execute(projectRef) }
     }
 }

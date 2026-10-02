@@ -1,77 +1,34 @@
-name: Build Flutter App
+name: Build Windows Release
 
 on:
-  push:
-    branches: [ main, master ]
+  workflow_dispatch: # Allows you to trigger the build manually
 
 jobs:
-  build-windows:
-    name: Build Windows (.exe)
+  build:
+    name: Build Windows App
     runs-on: windows-latest
+
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          cache: true
 
-      - name: Generate Windows Platform Files
-        run: flutter create . --platforms=windows
+      - name: Enable Windows Desktop
+        run: flutter config --enable-windows-desktop
 
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Windows App
+      - name: Build Windows Executable
         run: flutter build windows --release
 
-      - name: Upload Windows Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-executable
-          path: build/windows/x64/runner/Release/
-
-  build-android:
-    name: Build Android (.apk)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Java JDK
-        uses: actions/setup-java@v5
-        with:
-          distribution: 'zulu'
-          java-version: '17'
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
-
-      - name: Generate Android Platform Files
-        run: flutter create . --platforms=android
-
-      - name: Patch AndroidManifest & build.gradle (Fix APK Permissions & SDK)
-        run: |
-          # Inject required GPS permissions for geolocator to prevent runtime crashes
-          sed -i '/<application/i \    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />' android/app/src/main/AndroidManifest.xml
-          
-          # Force SDK versions required by geolocator (34) and printing (21)
-          sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle || true
-          sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle || true
-
-      - name: Install Dependencies
-        run: flutter pub get
-
-      - name: Build Android APK
-        run: flutter build apk --debug
-
-      - name: Upload Android APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          name: windows-app-release
+          # This is the default output path for Flutter Windows builds
+          path: build/windows/x64/runner/Release

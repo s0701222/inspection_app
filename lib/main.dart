@@ -13,7 +13,7 @@ void main() {
 }
 
 class InspectionApp extends StatelessWidget {
-  const InspectionApp({Key? key}) : super(key: key);
+  const InspectionApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -56,7 +56,7 @@ class PhotoData {
 }
 
 class InspectionForm extends StatefulWidget {
-  const InspectionForm({Key? key}) : super(key: key);
+  const InspectionForm({super.key});
 
   @override
   State<InspectionForm> createState() => _InspectionFormState();
@@ -106,56 +106,68 @@ class _InspectionFormState extends State<InspectionForm> {
 
   String _locationData = 'Fetching location...';
   List<PhotoData> _photos = [];
-  
-  // Track generation state to show loading UI
   bool _isGenerating = false;
 
   @override
   void initState() {
     super.initState();
-    _getLocation();
+    _ensureLocationPermissionAndGetLocation();
   }
 
-  // Live GPS Location for Device / Submission (Page 1 Footer)
-  Future<void> _getLocation() async {
+  // LIVE GPS: Fetches coordinates for the PDF Footer
+  Future<bool> _ensureLocationPermissionAndGetLocation({bool promptSettings = false}) async {
     try {
-      bool serviceEnabled;
-      LocationPermission permission;
-
-      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
+        if (promptSettings && mounted) await Geolocator.openLocationSettings();
         if (mounted) setState(() => _locationData = 'Location services disabled.');
-        return;
+        return false;
       }
 
-      permission = await Geolocator.checkPermission();
+      LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
           if (mounted) setState(() => _locationData = 'Location permissions denied');
-          return;
+          return false;
         }
       }
       
       if (permission == LocationPermission.deniedForever) {
+        if (promptSettings && mounted) await Geolocator.openAppSettings();
         if (mounted) setState(() => _locationData = 'Location permissions permanently denied.');
-        return;
+        return false;
       } 
 
-      Position position = await Geolocator.getCurrentPosition();
-      if (mounted) {
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 5),
+        );
+      } catch (_) {
+        position = await Geolocator.getLastKnownPosition();
+      }
+
+      if (position != null && mounted) {
         setState(() {
-          String latDir = position.latitude >= 0 ? 'N' : 'S';
-          String lngDir = position.longitude >= 0 ? 'E' : 'W';
-          _locationData = '${position.latitude.abs().toStringAsFixed(6)}°$latDir, ${position.longitude.abs().toStringAsFixed(6)}°$lngDir';
+          String latDir = position!.latitude >= 0 ? 'N' : 'S';
+          String lngDir = position!.longitude >= 0 ? 'E' : 'W';
+          _locationData = '${position!.latitude.abs().toStringAsFixed(6)}°$latDir, ${position!.longitude.abs().toStringAsFixed(6)}°$lngDir';
         });
+        return true;
+      } else if (mounted) {
+        setState(() => _locationData = 'Unable to obtain GPS location.');
+        return false;
       }
     } catch (e) {
       if (mounted) setState(() => _locationData = 'Location error (Check permissions)');
+      return false;
     }
+    return false;
   }
 
-  // Extract EXIF GPS and Capture Time
+  // EXIF GPS: Extracts metadata from attached photos
   Future<Map<String, String>> _extractPhotoExif(File file) async {
     try {
       final bytes = await file.readAsBytes();
@@ -197,23 +209,16 @@ class _InspectionFormState extends State<InspectionForm> {
         'time': photoTime ?? 'N/A',
       };
     } catch (_) {
-      return {
-        'gps': 'N/A',
-        'time': 'N/A',
-      };
+      return {'gps': 'N/A', 'time': 'N/A'};
     }
   }
 
   double _ratioToDouble(dynamic value) {
-    if (value is Ratio) {
-      return value.toDouble();
-    } else if (value is num) {
-      return value.toDouble();
-    }
+    if (value is Ratio) return value.toDouble();
+    if (value is num) return value.toDouble();
     return 0.0;
   }
 
-  // Pick Images (Uncompressed to preserve EXIF metadata)
   Future<void> _pickImages() async {
     final ImagePicker picker = ImagePicker();
     final List<XFile>? selectedImages = await picker.pickMultiImage();
@@ -240,11 +245,8 @@ class _InspectionFormState extends State<InspectionForm> {
     );
     if (picked != null) {
       setState(() {
-        if (isStart) {
-          _startDate = picked;
-        } else {
-          _endDate = picked;
-        }
+        if (isStart) _startDate = picked;
+        else _endDate = picked;
       });
     }
   }
@@ -256,26 +258,30 @@ class _InspectionFormState extends State<InspectionForm> {
     );
     if (picked != null) {
       setState(() {
-        if (isStart) {
-          _startTime = picked;
-        } else {
-          _endTime = picked;
-        }
+        if (isStart) _startTime = picked;
+        else _endTime = picked;
       });
     }
   }
 
-  // Generate PDF
+  // PDF Generation
   Future<void> _generatePdf() async {
     if (_isGenerating) return;
     
-    // Refresh the GPS location right before generating the PDF 
-    // in case location services were just turned on!
-    await _getLocation();
+    // Actively update live GPS before generating
+    bool locationRetrieved = await _ensureLocationPermissionAndGetLocation(promptSettings: true);
 
-    setState(() {
-      _isGenerating = true;
-    });
+    if (!locationRetrieved && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Notice: Could not acquire live GPS ($_locationData). Exporting with available metadata.'),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+
+    setState(() => _isGenerating = true);
 
     try {
       pw.Font regularFont;
@@ -295,12 +301,7 @@ class _InspectionFormState extends State<InspectionForm> {
         preloadedPdfImages.add(pw.MemoryImage(bytes));
       }
 
-      final pdf = pw.Document(
-        theme: pw.ThemeData.withFont(
-          base: regularFont,
-          bold: boldFont,
-        ),
-      );
+      final pdf = pw.Document(theme: pw.ThemeData.withFont(base: regularFont, bold: boldFont));
       
       final String startDateStr = DateFormat('dd/MM/yyyy').format(_startDate);
       final String endDateStr = DateFormat('dd/MM/yyyy').format(_endDate);
@@ -345,11 +346,8 @@ class _InspectionFormState extends State<InspectionForm> {
           },
           build: (pw.Context context) {
             return [
-              pw.Center(
-                child: pw.Text('Inspection Record Form', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
-              ),
+              pw.Center(child: pw.Text('Inspection Record Form', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
               pw.SizedBox(height: 20),
-
               pw.Text('Project/Contract No.: ${_projectController.text}', style: const pw.TextStyle(fontSize: 11)),
               pw.SizedBox(height: 4),
               pw.Row(
@@ -396,10 +394,7 @@ class _InspectionFormState extends State<InspectionForm> {
                           children: [
                             pw.Text(cond.title, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
                             if (cond.subtitle.isNotEmpty) 
-                              pw.Container(
-                                margin: const pw.EdgeInsets.only(top: 2),
-                                child: pw.Text(cond.subtitle, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey800))
-                              ),
+                              pw.Container(margin: const pw.EdgeInsets.only(top: 2), child: pw.Text(cond.subtitle, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey800))),
                           ]
                         )
                       ),
@@ -447,7 +442,6 @@ class _InspectionFormState extends State<InspectionForm> {
                   children: _photos.asMap().entries.map((entry) {
                     int idx = entry.key;
                     PhotoData item = entry.value;
-                    
                     final pdfImage = preloadedPdfImages[idx];
 
                     return pw.TableRow(
@@ -488,21 +482,9 @@ class _InspectionFormState extends State<InspectionForm> {
         name: 'Inspection_${DateFormat('yyyyMMdd').format(DateTime.now())}.pdf',
       );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error generating PDF: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error generating PDF: $e'), backgroundColor: Colors.red));
     } finally {
-      if (mounted) {
-        setState(() {
-          _isGenerating = false;
-        });
-      }
+      if (mounted) setState(() => _isGenerating = false);
     }
   }
 
@@ -515,13 +497,7 @@ class _InspectionFormState extends State<InspectionForm> {
           children: const [
             Icon(Icons.description, color: Colors.blueAccent),
             SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Inspection Record Form',
-                style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
+            Expanded(child: Text('Inspection Record Form', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16), overflow: TextOverflow.ellipsis)),
           ],
         ),
         backgroundColor: Colors.white,
@@ -551,13 +527,9 @@ class _InspectionFormState extends State<InspectionForm> {
           children: [
             const Text('Project/Contract No. *', style: TextStyle(fontWeight: FontWeight.w500)),
             const SizedBox(height: 8),
-            TextField(
-              controller: _projectController,
-              decoration: const InputDecoration(hintText: 'e.g. HK/2026/0042', border: OutlineInputBorder()),
-            ),
+            TextField(controller: _projectController, decoration: const InputDecoration(hintText: 'e.g. HK/2026/0042', border: OutlineInputBorder())),
             const SizedBox(height: 20),
 
-            // Dates
             Row(
               children: [
                 Expanded(
@@ -570,13 +542,7 @@ class _InspectionFormState extends State<InspectionForm> {
                         onTap: () => _selectDate(context, true),
                         child: InputDecorator(
                           decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14)),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(DateFormat('dd/MM/yyyy').format(_startDate)),
-                              const Icon(Icons.calendar_today, size: 20),
-                            ],
-                          ),
+                          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(DateFormat('dd/MM/yyyy').format(_startDate)), const Icon(Icons.calendar_today, size: 20)]),
                         ),
                       ),
                     ],
@@ -593,13 +559,7 @@ class _InspectionFormState extends State<InspectionForm> {
                         onTap: () => _selectDate(context, false),
                         child: InputDecorator(
                           decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14)),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(DateFormat('dd/MM/yyyy').format(_endDate)),
-                              const Icon(Icons.calendar_today, size: 20),
-                            ],
-                          ),
+                          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(DateFormat('dd/MM/yyyy').format(_endDate)), const Icon(Icons.calendar_today, size: 20)]),
                         ),
                       ),
                     ],
@@ -609,7 +569,6 @@ class _InspectionFormState extends State<InspectionForm> {
             ),
             const SizedBox(height: 20),
 
-            // Times
             Row(
               children: [
                 Expanded(
@@ -622,13 +581,7 @@ class _InspectionFormState extends State<InspectionForm> {
                         onTap: () => _selectTime(context, true),
                         child: InputDecorator(
                           decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14)),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(_startTime != null ? _startTime!.format(context) : '--:--'),
-                              const Icon(Icons.access_time, size: 20),
-                            ],
-                          ),
+                          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(_startTime != null ? _startTime!.format(context) : '--:--'), const Icon(Icons.access_time, size: 20)]),
                         ),
                       ),
                     ],
@@ -645,13 +598,7 @@ class _InspectionFormState extends State<InspectionForm> {
                         onTap: () => _selectTime(context, false),
                         child: InputDecorator(
                           decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14)),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(_endTime != null ? _endTime!.format(context) : '--:--'),
-                              const Icon(Icons.access_time, size: 20),
-                            ],
-                          ),
+                          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(_endTime != null ? _endTime!.format(context) : '--:--'), const Icon(Icons.access_time, size: 20)]),
                         ),
                       ),
                     ],
@@ -661,7 +608,6 @@ class _InspectionFormState extends State<InspectionForm> {
             ),
             const SizedBox(height: 20),
 
-            // Inspection Type
             const Text('Inspection Type'),
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
@@ -672,67 +618,31 @@ class _InspectionFormState extends State<InspectionForm> {
             ),
             const SizedBox(height: 32),
 
-            // General Conditions Block - Responsive Layout
             Container(
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade300),
-                borderRadius: BorderRadius.circular(8),
-              ),
+              decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('General Conditions', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 16),
-                  
                   ..._conditions.map((cond) => Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8.0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(cond.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.black87)),
-                        if (cond.subtitle.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2.0),
-                            child: Text(cond.subtitle, style: const TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic)),
-                          ),
+                        if (cond.subtitle.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 2.0), child: Text(cond.subtitle, style: const TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic))),
                         const SizedBox(height: 8),
                         Row(
                           children: [
-                            Radio<bool>(
-                              value: true,
-                              groupValue: cond.isYes,
-                              activeColor: Colors.indigo,
-                              visualDensity: VisualDensity.compact,
-                              onChanged: (val) => setState(() => cond.isYes = val!),
-                            ),
+                            Radio<bool>(value: true, groupValue: cond.isYes, activeColor: Colors.indigo, visualDensity: VisualDensity.compact, onChanged: (val) => setState(() => cond.isYes = val!)),
                             const Text('Yes'),
                             const SizedBox(width: 8),
-                            Radio<bool>(
-                              value: false,
-                              groupValue: cond.isYes,
-                              activeColor: Colors.indigo,
-                              visualDensity: VisualDensity.compact,
-                              onChanged: (val) => setState(() => cond.isYes = val!),
-                            ),
+                            Radio<bool>(value: false, groupValue: cond.isYes, activeColor: Colors.indigo, visualDensity: VisualDensity.compact, onChanged: (val) => setState(() => cond.isYes = val!)),
                             const Text('No'),
                             const SizedBox(width: 12),
-                            Expanded(
-                              child: SizedBox(
-                                height: 38,
-                                child: TextField(
-                                  controller: cond.remarksController,
-                                  decoration: InputDecoration(
-                                    hintText: 'Remarks',
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(6),
-                                      borderSide: BorderSide(color: Colors.grey.shade300),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+                            Expanded(child: SizedBox(height: 38, child: TextField(controller: cond.remarksController, decoration: InputDecoration(hintText: 'Remarks', contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0), border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: Colors.grey.shade300)))))),
                           ],
                         ),
                         if (_conditions.last != cond) const Divider(height: 24),
@@ -744,42 +654,26 @@ class _InspectionFormState extends State<InspectionForm> {
             ),
             const SizedBox(height: 24),
 
-            // Text Inputs
             const Text('Item Inspected', style: TextStyle(fontWeight: FontWeight.w500)),
             const SizedBox(height: 8),
-            TextField(
-              controller: _itemInspectedController,
-              decoration: const InputDecoration(border: OutlineInputBorder()),
-              maxLines: 4,
-            ),
+            TextField(controller: _itemInspectedController, decoration: const InputDecoration(border: OutlineInputBorder()), maxLines: 4),
             const SizedBox(height: 20),
 
             const Text('Inspection Findings/Results', style: TextStyle(fontWeight: FontWeight.w500)),
             const SizedBox(height: 8),
-            TextField(
-              controller: _findingsController,
-              decoration: const InputDecoration(border: OutlineInputBorder()),
-              maxLines: 4,
-            ),
+            TextField(controller: _findingsController, decoration: const InputDecoration(border: OutlineInputBorder()), maxLines: 4),
             const SizedBox(height: 20),
 
             const Text('Action Taken', style: TextStyle(fontWeight: FontWeight.w500)),
             const SizedBox(height: 8),
-            TextField(
-              controller: _actionTakenController,
-              decoration: const InputDecoration(border: OutlineInputBorder()),
-            ),
+            TextField(controller: _actionTakenController, decoration: const InputDecoration(border: OutlineInputBorder())),
             const SizedBox(height: 20),
 
             const Text('Other Witnessing Parties (if any)', style: TextStyle(fontWeight: FontWeight.w500)),
             const SizedBox(height: 8),
-            TextField(
-              controller: _witnessingPartiesController,
-              decoration: const InputDecoration(border: OutlineInputBorder()),
-            ),
+            TextField(controller: _witnessingPartiesController, decoration: const InputDecoration(border: OutlineInputBorder())),
             const SizedBox(height: 24),
 
-            // Photos Section 
             const Text('Photos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             InkWell(
@@ -788,18 +682,8 @@ class _InspectionFormState extends State<InspectionForm> {
               child: Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 32),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  border: Border.all(color: Colors.grey.shade300),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  children: const [
-                    Icon(Icons.add_a_photo, size: 40, color: Colors.indigo),
-                    SizedBox(height: 8),
-                    Text('Tap to add photos', style: TextStyle(color: Colors.indigo, fontWeight: FontWeight.w500)),
-                  ],
-                ),
+                decoration: BoxDecoration(color: Colors.grey.shade50, border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+                child: Column(children: const [Icon(Icons.add_a_photo, size: 40, color: Colors.indigo), SizedBox(height: 8), Text('Tap to add photos', style: TextStyle(color: Colors.indigo, fontWeight: FontWeight.w500))]),
               ),
             ),
             if (_photos.isNotEmpty) ...[
@@ -807,35 +691,18 @@ class _InspectionFormState extends State<InspectionForm> {
               GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 10,
-                ),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 10, mainAxisSpacing: 10),
                 itemCount: _photos.length,
                 itemBuilder: (context, index) {
                   return Stack(
                     fit: StackFit.expand,
                     children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.file(
-                          File(_photos[index].file.path),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
+                      ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.file(File(_photos[index].file.path), fit: BoxFit.cover)),
                       Positioned(
-                        top: 4,
-                        right: 4,
+                        top: 4, right: 4,
                         child: GestureDetector(
                           onTap: () => setState(() => _photos.removeAt(index)),
-                          child: Container(
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.white70,
-                            ),
-                            child: const Icon(Icons.cancel, color: Colors.red),
-                          ),
+                          child: Container(decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white70), child: const Icon(Icons.cancel, color: Colors.red)),
                         ),
                       ),
                     ],
