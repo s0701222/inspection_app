@@ -47,11 +47,15 @@ class PhotoData {
   final XFile file;
   final String photoGps;
   final String photoTime;
+  final double? latitude;
+  final double? longitude;
 
   PhotoData({
     required this.file,
     required this.photoGps,
     required this.photoTime,
+    this.latitude,
+    this.longitude,
   });
 }
 
@@ -167,14 +171,16 @@ class _InspectionFormState extends State<InspectionForm> {
     return false;
   }
 
-  // EXIF GPS: Extracts metadata from attached photos
-  Future<Map<String, String>> _extractPhotoExif(File file) async {
+  // EXIF GPS: Extracts metadata and raw coordinates from attached photos
+  Future<Map<String, dynamic>> _extractPhotoExif(File file) async {
     try {
       final bytes = await file.readAsBytes();
       final data = await readExifFromBytes(bytes);
 
       String? photoGps;
       String? photoTime;
+      double? latVal;
+      double? lngVal;
 
       if (data.containsKey('GPS GPSLatitude') && data.containsKey('GPS GPSLongitude')) {
         final latTag = data['GPS GPSLatitude'];
@@ -190,8 +196,14 @@ class _InspectionFormState extends State<InspectionForm> {
             double latDeg = _ratioToDouble(latValues[0]) + (_ratioToDouble(latValues[1]) / 60.0) + (_ratioToDouble(latValues[2]) / 3600.0);
             double lngDeg = _ratioToDouble(lngValues[0]) + (_ratioToDouble(lngValues[1]) / 60.0) + (_ratioToDouble(lngValues[2]) / 3600.0);
 
-            String latDir = latRef.contains('S') ? 'S' : 'N';
-            String lngDir = lngRef.contains('W') ? 'W' : 'E';
+            if (latRef.contains('S') || latRef == 'S') latDeg = -latDeg;
+            if (lngRef.contains('W') || lngRef == 'W') lngDeg = -lngDeg;
+
+            latVal = latDeg;
+            lngVal = lngDeg;
+
+            String latDir = latDeg >= 0 ? 'N' : 'S';
+            String lngDir = lngDeg >= 0 ? 'E' : 'W';
 
             photoGps = '${latDeg.abs().toStringAsFixed(6)}°$latDir, ${lngDeg.abs().toStringAsFixed(6)}°$lngDir';
           }
@@ -207,9 +219,11 @@ class _InspectionFormState extends State<InspectionForm> {
       return {
         'gps': photoGps ?? 'N/A',
         'time': photoTime ?? 'N/A',
+        'lat': latVal,
+        'lng': lngVal,
       };
     } catch (_) {
-      return {'gps': 'N/A', 'time': 'N/A'};
+      return {'gps': 'N/A', 'time': 'N/A', 'lat': null, 'lng': null};
     }
   }
 
@@ -230,6 +244,8 @@ class _InspectionFormState extends State<InspectionForm> {
             file: xFile,
             photoGps: exif['gps']!,
             photoTime: exif['time']!,
+            latitude: exif['lat'],
+            longitude: exif['lng'],
           ));
         });
       }
@@ -268,7 +284,6 @@ class _InspectionFormState extends State<InspectionForm> {
   Future<void> _generatePdf() async {
     if (_isGenerating) return;
     
-    // Actively update live GPS before generating
     bool locationRetrieved = await _ensureLocationPermissionAndGetLocation(promptSettings: true);
 
     if (!locationRetrieved && mounted) {
@@ -464,6 +479,22 @@ class _InspectionFormState extends State<InspectionForm> {
                               pw.Text('Time: ${item.photoTime}', style: const pw.TextStyle(fontSize: 10)),
                               pw.SizedBox(height: 4),
                               pw.Text('GPS: ${item.photoGps}', style: const pw.TextStyle(fontSize: 10)),
+                              
+                              // Conditionally display the Google Maps link ONLY when valid GPS data exists
+                              if (item.photoGps != 'N/A' && item.latitude != null && item.longitude != null) ...[
+                                pw.SizedBox(height: 4),
+                                pw.UrlLink(
+                                  destination: 'https://www.google.com/maps/search/?api=1&query=${item.latitude},${item.longitude}',
+                                  child: pw.Text(
+                                    'View on Google Maps',
+                                    style: const pw.TextStyle(
+                                      fontSize: 10,
+                                      color: PdfColors.blue,
+                                      decoration: pw.TextDecoration.underline,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ]
                           )
                         ),
