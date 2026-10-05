@@ -241,7 +241,7 @@ class _InspectionFormState extends State<InspectionForm> {
   }
 
  Future<void> _pickImages() async {
-    // 1. Request Android Media Location permission at runtime
+    // 1. Request Android Media Location permission at runtime1
     if (Platform.isAndroid) {
       await Permission.accessMediaLocation.request();
     }
