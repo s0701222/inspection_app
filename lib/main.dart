@@ -7,6 +7,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:exif/exif.dart';
+import 'package:permission_handler/permission_handler.dart'; // <--- ADD THIS
 
 void main() {
   runApp(const InspectionApp());
@@ -196,16 +197,19 @@ class _InspectionFormState extends State<InspectionForm> {
             double latDeg = _ratioToDouble(latValues[0]) + (_ratioToDouble(latValues[1]) / 60.0) + (_ratioToDouble(latValues[2]) / 3600.0);
             double lngDeg = _ratioToDouble(lngValues[0]) + (_ratioToDouble(lngValues[1]) / 60.0) + (_ratioToDouble(lngValues[2]) / 3600.0);
 
-            if (latRef.contains('S') || latRef == 'S') latDeg = -latDeg;
-            if (lngRef.contains('W') || lngRef == 'W') lngDeg = -lngDeg;
+            // If coordinates are 0.0 (redacted by Android), skip assigning them
+            if (latDeg != 0.0 || lngDeg != 0.0) {
+              if (latRef.contains('S') || latRef == 'S') latDeg = -latDeg;
+              if (lngRef.contains('W') || lngRef == 'W') lngDeg = -lngDeg;
 
-            latVal = latDeg;
-            lngVal = lngDeg;
+              latVal = latDeg;
+              lngVal = lngDeg;
 
-            String latDir = latDeg >= 0 ? 'N' : 'S';
-            String lngDir = lngDeg >= 0 ? 'E' : 'W';
+              String latDir = latDeg >= 0 ? 'N' : 'S';
+              String lngDir = lngDeg >= 0 ? 'E' : 'W';
 
-            photoGps = '${latDeg.abs().toStringAsFixed(6)}°$latDir, ${lngDeg.abs().toStringAsFixed(6)}°$lngDir';
+              photoGps = '${latDeg.abs().toStringAsFixed(6)}°$latDir, ${lngDeg.abs().toStringAsFixed(6)}°$lngDir';
+            }
           }
         }
       }
@@ -228,14 +232,26 @@ class _InspectionFormState extends State<InspectionForm> {
   }
 
   double _ratioToDouble(dynamic value) {
-    if (value is Ratio) return value.toDouble();
+    if (value is Ratio) {
+      if (value.denominator == 0) return 0.0; // Prevents the 0/0 NaN error
+      return value.toDouble();
+    }
     if (value is num) return value.toDouble();
     return 0.0;
   }
 
-  Future<void> _pickImages() async {
+ Future<void> _pickImages() async {
+    // 1. Request Android Media Location permission at runtime
+    if (Platform.isAndroid) {
+      await Permission.accessMediaLocation.request();
+    }
+
     final ImagePicker picker = ImagePicker();
-    final List<XFile>? selectedImages = await picker.pickMultiImage();
+    // 2. Explicitly request full metadata
+    final List<XFile>? selectedImages = await picker.pickMultiImage(
+      requestFullMetadata: true, 
+    );
+    
     if (selectedImages != null && selectedImages.isNotEmpty) {
       for (var xFile in selectedImages) {
         final exif = await _extractPhotoExif(File(xFile.path));
