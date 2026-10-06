@@ -7,7 +7,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:exif/exif.dart';
-import 'package:permission_handler/permission_handler.dart'; // <--- ADD THIS
+import 'package:permission_handler/permission_handler.dart';
 
 void main() {
   runApp(const InspectionApp());
@@ -74,6 +74,7 @@ class _InspectionFormState extends State<InspectionForm> {
   final TextEditingController _findingsController = TextEditingController(text: 'Please refer to the photos attached');
   final TextEditingController _actionTakenController = TextEditingController(text: 'Nil');
   final TextEditingController _witnessingPartiesController = TextEditingController(text: 'Nil');
+  final TextEditingController _othersController = TextEditingController();
 
   // Date & Time
   DateTime _startDate = DateTime.now();
@@ -81,9 +82,19 @@ class _InspectionFormState extends State<InspectionForm> {
   TimeOfDay? _startTime;
   TimeOfDay? _endTime;
 
-  // Inspection Type
-  String _inspectionType = 'General';
-  final List<String> _inspectionTypes = ['General', 'Safety', 'Environmental', 'Quality'];
+  // Inspection Type Selection
+  final List<String> _inspectionTypes = [
+    'General',
+    'FAT',
+    'Builder\'s Work',
+    'Existing Plant',
+    'Existing Installation',
+    'T&C',
+    'Handover',
+    'DLP',
+    'Others'
+  ];
+  String _selectedInspectionType = 'General';
 
   // Conditions List
   final List<ConditionItemModel> _conditions = [
@@ -117,6 +128,20 @@ class _InspectionFormState extends State<InspectionForm> {
   void initState() {
     super.initState();
     _ensureLocationPermissionAndGetLocation();
+  }
+
+  @override
+  void dispose() {
+    _projectController.dispose();
+    _itemInspectedController.dispose();
+    _findingsController.dispose();
+    _actionTakenController.dispose();
+    _witnessingPartiesController.dispose();
+    _othersController.dispose();
+    for (var cond in _conditions) {
+      cond.remarksController.dispose();
+    }
+    super.dispose();
   }
 
   // LIVE GPS: Fetches coordinates for the PDF Footer
@@ -197,7 +222,6 @@ class _InspectionFormState extends State<InspectionForm> {
             double latDeg = _ratioToDouble(latValues[0]) + (_ratioToDouble(latValues[1]) / 60.0) + (_ratioToDouble(latValues[2]) / 3600.0);
             double lngDeg = _ratioToDouble(lngValues[0]) + (_ratioToDouble(lngValues[1]) / 60.0) + (_ratioToDouble(lngValues[2]) / 3600.0);
 
-            // If coordinates are 0.0 (redacted by Android), skip assigning them
             if (latDeg != 0.0 || lngDeg != 0.0) {
               if (latRef.contains('S') || latRef == 'S') latDeg = -latDeg;
               if (lngRef.contains('W') || lngRef == 'W') lngDeg = -lngDeg;
@@ -233,21 +257,19 @@ class _InspectionFormState extends State<InspectionForm> {
 
   double _ratioToDouble(dynamic value) {
     if (value is Ratio) {
-      if (value.denominator == 0) return 0.0; // Prevents the 0/0 NaN error
+      if (value.denominator == 0) return 0.0;
       return value.toDouble();
     }
     if (value is num) return value.toDouble();
     return 0.0;
   }
 
- Future<void> _pickImages() async {
-    // 1. Request Android Media Location permission at runtime1
+  Future<void> _pickImages() async {
     if (Platform.isAndroid) {
       await Permission.accessMediaLocation.request();
     }
 
     final ImagePicker picker = ImagePicker();
-    // 2. Explicitly request full metadata
     final List<XFile>? selectedImages = await picker.pickMultiImage(
       requestFullMetadata: true, 
     );
@@ -296,7 +318,7 @@ class _InspectionFormState extends State<InspectionForm> {
     }
   }
 
-  // PDF Generation & Direct Export (Selectable Vector Text)
+  // PDF Generation & Direct Export
   Future<void> _generatePdf({bool shareDirectly = true}) async {
     if (_isGenerating) return;
     
@@ -345,11 +367,16 @@ class _InspectionFormState extends State<InspectionForm> {
       
       final String submitTime = '${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now())} HKT';
 
+      // Format inspection type display name
+      final String formattedInspectionType = (_selectedInspectionType == 'Others' && _othersController.text.trim().isNotEmpty)
+          ? 'Others (${_othersController.text.trim()})'
+          : _selectedInspectionType;
+
       pw.Widget buildPdfTextField(String label, String value) {
         return pw.Container(
           margin: const pw.EdgeInsets.only(bottom: 12),
           child: pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            cross: pw.CrossAxisAlignment.start,
             children: [
               pw.Text(label, style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 4),
@@ -395,7 +422,7 @@ class _InspectionFormState extends State<InspectionForm> {
                 ],
               ),
               pw.SizedBox(height: 4),
-              pw.Text('Inspection Type: $_inspectionType', style: const pw.TextStyle(fontSize: 11)),
+              pw.Text('Inspection Type: $formattedInspectionType', style: const pw.TextStyle(fontSize: 11)),
               pw.SizedBox(height: 20),
 
               pw.Text('General Conditions', style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
@@ -531,10 +558,8 @@ class _InspectionFormState extends State<InspectionForm> {
       final String filename = 'Inspection_${DateFormat('yyyyMMdd').format(DateTime.now())}.pdf';
 
       if (shareDirectly) {
-        // Export file directly via Share Sheet -> Enables opening in Acrobat / Files with fully selectable text
         await Printing.sharePdf(bytes: pdfBytes, filename: filename);
       } else {
-        // Print Spool Preview
         await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdfBytes, name: filename);
       }
     } catch (e) {
@@ -685,11 +710,37 @@ class _InspectionFormState extends State<InspectionForm> {
             const Text('Inspection Type'),
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
-              value: _inspectionType,
-              decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12)),
-              items: _inspectionTypes.map((type) => DropdownMenuItem(value: type, child: Text(type))).toList(),
-              onChanged: (val) => setState(() => _inspectionType = val!),
+              value: _selectedInspectionType,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12),
+              ),
+              items: _inspectionTypes
+                  .map((type) => DropdownMenuItem(value: type, child: Text(type)))
+                  .toList(),
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() {
+                    _selectedInspectionType = val;
+                    if (val != 'Others') {
+                      _othersController.clear();
+                    }
+                  });
+                }
+              },
             ),
+            if (_selectedInspectionType == 'Others') ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _othersController,
+                decoration: const InputDecoration(
+                  labelText: 'Others (please specify)',
+                  hintText: 'Enter custom inspection type',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                ),
+              ),
+            ],
             const SizedBox(height: 32),
 
             Container(
