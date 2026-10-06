@@ -372,11 +372,11 @@ class _InspectionFormState extends State<InspectionForm> {
           ? 'Others (${_othersController.text.trim()})'
           : _selectedInspectionType;
 
-      pw.Widget buildPdfTextField(String label, String value) {
+pw.Widget buildPdfTextField(String label, String value) {
         return pw.Container(
           margin: const pw.EdgeInsets.only(bottom: 12),
           child: pw.Column(
-            cross: pw.CrossAxisAlignment.start,
+            crossAxisAlignment: pw.CrossAxisAlignment.start, // FIXED
             children: [
               pw.Text(label, style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
               pw.SizedBox(height: 4),
